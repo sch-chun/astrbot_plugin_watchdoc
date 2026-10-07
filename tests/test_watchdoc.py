@@ -5,9 +5,11 @@
 """
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
+from bs4.element import Tag
 
 from astrbot.api import FunctionTool, ToolSet
 from astrbot.api import web as web_mod
@@ -87,6 +89,30 @@ class FakeCronManager:
         )
         self.jobs[name] = job
         return job
+
+
+class FakeStream:
+    """aiohttp 响应流的替身，按固定块大小吐数据。"""
+
+    def __init__(self, data: bytes, chunk: int = 8):
+        self._data = data
+        self._chunk = chunk
+
+    def iter_chunked(self, _size: int):
+        async def gen():
+            for start in range(0, len(self._data), self._chunk):
+                yield self._data[start : start + self._chunk]
+
+        return gen()
+
+
+class FakeResp:
+    """aiohttp 响应的替身，只提供读取响应体需要的字段。"""
+
+    def __init__(self, data: bytes, declared=None, charset=None):
+        self.content = FakeStream(data)
+        self.content_length = declared
+        self.charset = charset
 
 
 class FakeConversation:
@@ -1247,6 +1273,114 @@ async def test_probe_skips_classless_fallback(monkeypatch, tmp_path):
     assert "div（无 class）" not in out
     suggestion = out.split("建议填：")[1].split("\n")[0]
     assert suggestion in ("main", ".markdown-body")
+
+async def test_read_body_rejects_oversized_declared_length():
+    """声明的 Content-Length 超限时，一个字节都不该读。"""
+    resp = FakeResp(b"x" * 1024, declared=10 * 1024 * 1024)
+
+    with pytest.raises(fetch.PageTooLargeError):
+        await fetch.read_body(resp, 1024)
+
+
+async def test_read_body_rejects_oversized_stream():
+    """chunked 响应没有声明长度，必须靠实际读取量卡住。"""
+    resp = FakeResp(b"x" * 4096, declared=None)
+
+    with pytest.raises(fetch.PageTooLargeError):
+        await fetch.read_body(resp, 1024)
+
+
+async def test_read_body_reads_within_limit():
+    """未超限时正常读完，并按响应的字符集解码。"""
+    resp = FakeResp("正文".encode("utf-8"), declared=6, charset="utf-8")
+
+    assert await fetch.read_body(resp, 1024) == "正文"
+
+
+async def test_read_body_falls_back_on_unusable_charset():
+    """声明的字符集不可识别时回落 UTF-8，而不是把解码异常抛出去。"""
+    resp = FakeResp("正文".encode("utf-8"), declared=6, charset="not-a-codec")
+
+    assert await fetch.read_body(resp, 1024) == "正文"
+
+    resp = FakeResp("正文".encode("utf-8"), declared=6, charset=None)
+    assert await fetch.read_body(resp, 1024) == "正文"
+
+
+async def test_normalize_runs_off_the_event_loop(monkeypatch, tmp_path):
+    """归一化跑在线程里，避免用户正则的灾难性回溯拖死事件循环。"""
+    plugin, _ = make_plugin(monkeypatch, tmp_path, {"targets": [TARGET]})
+    patch_fetch(monkeypatch, plugin, HTML)
+
+    threads = []
+    real = plugin._normalize
+
+    def spy(text, target):
+        threads.append(threading.current_thread())
+        return real(text, target)
+
+    monkeypatch.setattr(plugin, "_normalize", spy)
+
+    await plugin._check_all()
+
+    assert threads, "归一化没有被调用"
+    assert all(t is not threading.main_thread() for t in threads)
+
+
+async def test_probe_fallback_only_weighs_top_level_divs(monkeypatch, tmp_path):
+    """兜底扫描只称最外层 div，嵌套 div 不应被反复取文本。"""
+    monkeypatch.setattr(fetch, "MIN_TEXT_LEN", 5)
+    plugin, _ = make_plugin(monkeypatch, tmp_path, {})
+    nested = (
+        "<html><body><div class='outer'>"
+        + "<div class='mid'>" * 6
+        + "正文正文正文正文正文正文"
+        + "</div>" * 6
+        + "</div></body></html>"
+    )
+    patch_fetch(monkeypatch, plugin, nested)
+
+    weighed = []
+    real = Tag.get_text
+
+    def spy(self, *args, **kwargs):
+        if self.name == "div":
+            weighed.append(self)
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Tag, "get_text", spy)
+
+    await plugin._probe_url("https://example.com/doc")
+
+    assert weighed, "没有扫描任何 div"
+    assert all(div.find_parent("div") is None for div in weighed)
+
+
+async def test_api_save_targets_drops_snapshot_of_removed_item(
+    monkeypatch, tmp_path
+):
+    """删掉的监控项要连基线快照一起清掉。"""
+    plugin, _ = make_plugin(monkeypatch, tmp_path, {"targets": [TARGET]})
+    snap = plugin.snapshot_dir / "demo.md"
+    snap.write_text("旧基线", encoding="utf-8")
+
+    await _call_api(plugin, {"targets": []})
+
+    assert not snap.exists()
+
+
+async def test_api_save_targets_keeps_snapshot_of_remaining_item(
+    monkeypatch, tmp_path
+):
+    """仍在列表里的监控项，基线快照不能被误删。"""
+    plugin, _ = make_plugin(monkeypatch, tmp_path, {"targets": [TARGET]})
+    snap = plugin.snapshot_dir / "demo.md"
+    snap.write_text("旧基线", encoding="utf-8")
+
+    await _call_api(plugin, {"targets": [TARGET]})
+
+    assert snap.exists()
+
 
 async def test_probe_reports_js_rendered_page(monkeypatch, tmp_path):
     """抓不到正文时应明确提示可能需要 JS 渲染，而不是给个空建议。"""

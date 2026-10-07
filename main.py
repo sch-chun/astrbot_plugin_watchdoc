@@ -163,11 +163,13 @@ class WatchdocPlugin(Star):
             return
 
         html = await self._fetch(url)
-        # bs4 与 markitdown 都是同步阻塞的，放进线程避免卡住事件循环
+        # bs4 与 markitdown 都是同步阻塞的，放进线程避免卡住事件循环。
+        # 归一化同理：ignore_patterns 是用户填的正则，长文本上灾难性回溯会
+        # 把整个 bot 的事件循环拖死，而这行跑的是无人值守的定时任务。
         current = await asyncio.to_thread(
             self._to_markdown, html, str(target.get("selector") or ""), tid
         )
-        current = self._normalize(current, target)
+        current = await asyncio.to_thread(self._normalize, current, target)
         if not current.strip():
             logger.warning(f"[watchdoc] {tid} 抓取内容为空，页面可能需要 JS 渲染")
             return
@@ -279,8 +281,10 @@ class WatchdocPlugin(Star):
             if not isinstance(item, dict) or not str(item.get("url") or ""):
                 return error_response("每个监控项都必须是对象且带 url", status_code=400)
             cleaned.append(item)
+        previous = await self._load_targets()
         await self._save_targets(cleaned)
         await self._sync_cron_job()
+        storage.drop_snapshots(self.snapshot_dir, previous, cleaned)
         return json_response({"saved": True, "count": len(cleaned)})
 
     async def _api_sessions(self):

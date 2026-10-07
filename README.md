@@ -6,7 +6,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.24.0-blueviolet)](https://github.com/AstrBotDevs/AstrBot)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v0.1.0-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.1.1-green)](CHANGELOG.md)
 
 ---
 
@@ -121,6 +121,7 @@ https://github.com/sch-chun/astrbot_plugin_watchdoc
 ## 已知限制
 
 - **纯 HTTP 抓取，不执行 JavaScript。** SPA 或需登录才能看到正文的页面抓不到内容，日志会提示「页面可能需要 JS 渲染」，这种情况建议换成静态源（例如文档的 Markdown 源文件）。
+- **响应体超过 20 MB 的页面会被跳过。** 无人值守的定时检查是串行的，一个失控的故障页不该拖累其它监控项；超限的项会记一条日志并跳过本轮。
 - **选择器失效会导致持续误报。** 选中构建产物型的类名（带 hash）等于埋雷，配置页会把这类标注为「易失效」，尽量选语义化的容器。
 - **归一化刻意不做日期替换。** 日期可能是有意义的版本标识，替换掉会漏掉真正的变更；确有动态噪音时用 `ignore_patterns` 精确剔除。
 
@@ -129,7 +130,7 @@ https://github.com/sch-chun/astrbot_plugin_watchdoc
 ## 开发
 
 ```bash
-pytest -q            # 85 条用例，全部离线，不依赖网络
+pytest -q            # 93 条用例，全部离线，不依赖网络
 ruff format . && ruff check .
 ```
 
