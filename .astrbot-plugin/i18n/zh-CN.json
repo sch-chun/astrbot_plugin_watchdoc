@@ -1,0 +1,8 @@
+{
+  "pages": {
+    "designer": {
+      "title": "Watchdoc 配置",
+      "description": "输入网址抓取页面，可视化点选要监控的正文区域"
+    }
+  }
+}

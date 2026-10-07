@@ -1,0 +1,426 @@
+:root {
+  --bg: #ffffff;
+  --panel: #f6f7f9;
+  --text: #1a1a1a;
+  --muted: #6b7280;
+  --border: #e3e5e8;
+  --accent: #1d9e75;
+  --accent-soft: #e1f5ee;
+  --warn: #ba7517;
+  --warn-soft: #faeeda;
+  --danger: #a32d2d;
+}
+
+[data-theme="dark"] {
+  --bg: #16181c;
+  --panel: #1e2126;
+  --text: #e6e8ea;
+  --muted: #9aa1aa;
+  --border: #2c3037;
+  --accent: #5dcaa5;
+  --accent-soft: #085041;
+  --warn: #ef9f27;
+  --warn-soft: #633806;
+  --danger: #f09595;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bar input {
+  flex: 1;
+  min-width: 0;
+}
+
+input[type="text"] {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+select {
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  max-width: 100%;
+}
+
+.row input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+
+button {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+[data-theme="dark"] button.primary {
+  color: #04251c;
+}
+
+.status {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.layout {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.preview-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* 拖拽条同时充当分隔线，所以上面两项不再各自画边框 */
+.handle-v {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: var(--border);
+}
+
+.handle-h {
+  flex: 0 0 5px;
+  cursor: row-resize;
+  background: var(--border);
+}
+
+.handle-v:hover,
+.handle-h:hover {
+  background: var(--accent);
+}
+
+body.resizing {
+  user-select: none;
+}
+
+.preview-host {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.match-box {
+  display: flex;
+  flex-direction: column;
+}
+
+.match-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 14px 0;
+}
+
+/* 与右栏面板标题同一档，别和字段名混在一起 */
+.match-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.match-text {
+  margin: 0;
+  padding: 6px 14px 10px;
+  /* 正文可能上万字符，限高内部滚动，别把预览区挤没；短内容则自动收窄 */
+  min-height: 56px;
+  max-height: 150px;
+  overflow: auto;
+  color: var(--text);
+  font: 12px/1.6 var(--font-mono, ui-monospace, "Cascadia Code", Consolas, monospace);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.match-text:empty::before {
+  content: "（选择器没有命中任何内容）";
+  color: var(--muted);
+}
+
+.hint {
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.side {
+  width: 360px;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* 字段名用主色并加粗，说明文字才用次级色且更小：两者同色时几乎分不开 */
+.panel label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* 输入框都是 font: inherit，会把上面 label 的 12px/500 一起继承成粗体小字 */
+.panel label input[type="text"],
+.panel label select,
+.panel label textarea {
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.panel label input[type="text"] {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+}
+
+/* select 默认按最长 option 撑开，长 UMO 会把右边界顶出去 */
+.panel label select {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+}
+
+/* 地址是只读的：值由抓取或点选已有项决定，不在这里改 */
+.url-line {
+  display: block;
+  margin-top: 3px;
+  color: var(--text);
+  font-weight: 400;
+  word-break: break-all;
+}
+
+.panel label textarea {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  /* 不能用 font: inherit，它会把 label 的字号字重一起继承过来 */
+  font-family: inherit;
+  resize: vertical;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row .spacer {
+  flex: 1;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+}
+
+.muted {
+  color: var(--muted);
+  margin: 0;
+}
+
+.small {
+  margin-top: 4px;
+  /* 下边距比上边距大：说明文字要贴着它描述的那一项，而不是和下一项等距 */
+  margin-bottom: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.candidates li,
+.list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.candidates code {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
+.tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.tag.stable {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tag.weak {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  /* 自己有个框，否则空状态下只有一行灰字，看不出这是个可编辑的区域 */
+  min-height: 62px;
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.chip-close {
+  border: 0;
+  padding: 0 2px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.chip-close:hover {
+  color: var(--danger);
+}
+
+.list li {
+  display: block;
+  padding: 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.list li.current {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.list .top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.list .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list .sel {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.remove {
+  padding: 3px 8px;
+  color: var(--danger);
+}

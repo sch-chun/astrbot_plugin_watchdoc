@@ -1,0 +1,4 @@
+# 测试相关文件纳入版本跟踪（git 可见、可协作），
+# 但发布打包（git archive / 插件市场构建）时排除，不随插件分发出去。
+tests/ export-ignore
+pytest.ini export-ignore

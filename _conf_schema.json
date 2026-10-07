@@ -1,0 +1,39 @@
+{
+  "cron": {
+    "description": "检查周期（cron 表达式）",
+    "type": "string",
+    "default": "0 */6 * * *",
+    "hint": "五段式 cron，默认每 6 小时一次。任务会出现在面板的定时任务页：有监控项时自动创建，清空监控项后自动撤掉，改动将在插件重载或保存监控项后按此处配置重置。监控项在插件详情页的「Watchdoc 配置」页面里添加"
+  },
+  "summary_provider": {
+    "description": "总结用模型",
+    "type": "string",
+    "_special": "select_provider",
+    "default": "",
+    "hint": "留空则使用 AstrBot 的默认对话模型"
+  },
+  "use_session_persona": {
+    "description": "总结时带上会话人格",
+    "type": "bool",
+    "default": true,
+    "hint": "按每个推送会话当前生效的人格生成总结；人格相同的会话共用一份。关闭后所有会话共用一份不含人格的总结"
+  },
+  "agent_mode": {
+    "description": "总结使用 Agent 循环",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后模型可自行调用人格允许的工具，并按需查阅变更前后原文。代价是多轮对话，token 消耗明显更高"
+  },
+  "agent_max_steps": {
+    "description": "Agent 最大轮次",
+    "type": "int",
+    "default": 16,
+    "hint": "仅在 Agent 循环开启时生效。达到上限时 AstrBot 会拔掉工具并让模型收尾；设为 16 及以上，还会在用到 80% / 90% / 95% 时提前追加收尾提醒"
+  },
+  "ignore_patterns": {
+    "description": "全局忽略规则（正则表达式）",
+    "type": "list",
+    "default": [],
+    "hint": "在归一化阶段从文本中删除匹配内容。仅在确认页面存在动态噪音时添加"
+  }
+}
