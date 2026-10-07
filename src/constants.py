@@ -10,6 +10,14 @@ DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
+# 单次抓取的响应体上限。定时任务是无人值守的，一个失控的故障页会把整轮检查
+# 拖死，宁可放弃这一个监控项也不能连累其它项。
+# 实测转换开销：约 7 秒 / MB，进程 RSS 增量约 40~60 倍输入大小（1 MB→+69 MB、
+# 5 MB→+307 MB、10 MB→+381 MB）。20 MB 是「明显不是文档页」的量级，再往上
+# 内存峰值就到 GB 级了，小内存机器请调低这里。
+MAX_HTML_BYTES = 20 * 1024 * 1024
+# 分块读取的块大小
+FETCH_CHUNK_BYTES = 64 * 1024
 MAX_HISTORY_PER_TARGET = 50
 # AstrBot 只在步数预算 >= 16 时才在 80%/90%/95% 处追加收尾提醒
 # （tool_loop_agent_runner.py 的步数预算提示），低于 16 就只剩到达上限那一次

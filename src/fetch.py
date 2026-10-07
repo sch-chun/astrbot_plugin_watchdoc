@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import io
 import re
 from collections.abc import Awaitable, Callable
@@ -14,7 +15,17 @@ from markitdown_no_magika import MarkItDown, StreamInfo
 
 from astrbot.api import logger
 
-from .constants import DEFAULT_UA, MIN_TEXT_LEN, SELECTOR_CANDIDATES
+from .constants import (
+    DEFAULT_UA,
+    FETCH_CHUNK_BYTES,
+    MAX_HTML_BYTES,
+    MIN_TEXT_LEN,
+    SELECTOR_CANDIDATES,
+)
+
+
+class PageTooLargeError(Exception):
+    """响应体超过上限。"""
 
 
 async def fetch_html(url: str) -> str:
@@ -28,12 +39,65 @@ async def fetch_html(url: str) -> str:
 
     Raises:
         aiohttp.ClientError: 网络请求失败时抛出。
+        PageTooLargeError: 响应体超过上限时抛出。
     """
     timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(trust_env=True, timeout=timeout) as session:
         async with session.get(url, headers={"User-Agent": DEFAULT_UA}) as resp:
             resp.raise_for_status()
-            return await resp.text(errors="replace")
+            return await read_body(resp, MAX_HTML_BYTES)
+
+
+async def read_body(resp, limit: int = MAX_HTML_BYTES) -> str:
+    """按上限读取响应体。
+
+    Content-Length 只能信一半：可能是 None（chunked），也可能与实际不符，
+    所以声明值与实际读取量两处都要卡上限。
+
+    Args:
+        resp: aiohttp 响应对象，需具备 content_length 与 content。
+        limit: 允许的字节数上限。
+
+    Returns:
+        按响应声明字符集解码后的文本，声明缺失时按 UTF-8 解码。
+
+    Raises:
+        PageTooLargeError: 声明值或实际读取量超过上限时抛出。
+    """
+    declared = resp.content_length
+    if declared is not None and declared > limit:
+        raise PageTooLargeError(f"响应过大：声明 {declared:,} 字节，上限 {limit:,}")
+
+    chunks = []
+    size = 0
+    async for chunk in resp.content.iter_chunked(FETCH_CHUNK_BYTES):
+        size += len(chunk)
+        if size > limit:
+            raise PageTooLargeError(f"响应过大：超过上限 {limit:,} 字节")
+        chunks.append(chunk)
+
+    return b"".join(chunks).decode(_resolve_encoding(resp.charset), errors="replace")
+
+
+def _resolve_encoding(declared: str | None) -> str:
+    """把响应声明的字符集规范化成 Python 能用的编码名。
+
+    与 aiohttp 的 `get_encoding()` 对齐：声明缺失或无法识别时回落 UTF-8。
+    （aiohttp 默认不再做 chardet 探测，`ClientResponse._resolve_charset` 是个
+    直接返回 utf-8 的桩，除非显式传 `fallback_charset_resolver`。）
+
+    Args:
+        declared: Content-Type 里的 charset 值，可能为 None。
+
+    Returns:
+        可用于 bytes.decode 的编码名。
+    """
+    if not declared:
+        return "utf-8"
+    try:
+        return codecs.lookup(declared).name
+    except (LookupError, ValueError):
+        return "utf-8"
 
 
 def build_soup(html: str) -> BeautifulSoup:
@@ -122,9 +186,13 @@ async def probe_url(url: str, fetcher: Callable[[str], Awaitable[str]]) -> str:
         if size >= MIN_TEXT_LEN:
             rows.append((selector, size))
 
-    # 兜底：文本量最大的 div，用于候选都没命中的站点
+    # 兜底：文本量最大的 div，用于候选都没命中的站点。
+    # 只称最外层 div——父节点的文本必然包含子节点，因此文本量最大的一定在
+    # 顶层；逐个 div 取文本会让嵌套结构被反复遍历，大页面上是平方级开销。
     best_div, best_size = None, 0
     for div in soup.find_all("div"):
+        if div.find_parent("div") is not None:
+            continue
         size = len(div.get_text(" ", strip=True))
         if size > best_size:
             best_div, best_size = div, size

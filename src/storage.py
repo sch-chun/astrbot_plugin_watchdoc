@@ -83,6 +83,26 @@ def normalize_targets(data: object) -> list[dict]:
     return data
 
 
+def drop_snapshots(
+    snapshot_dir: Path, previous: list[dict], current: list[dict]
+) -> None:
+    """删除已移除监控项的基线快照。
+
+    留着旧快照会让同 ID 的新监控项拿它当基线，第一次检查就误报变更。
+    变更存档是有意保留的记录，不在这里动。
+
+    Args:
+        snapshot_dir: 快照目录。
+        previous: 保存前的监控项列表。
+        current: 保存后的监控项列表。
+    """
+    kept = {str(item.get("id") or "") for item in current}
+    for item in previous:
+        tid = str(item.get("id") or "")
+        if tid and tid not in kept:
+            (snapshot_dir / f"{safe_name(tid)}.md").unlink(missing_ok=True)
+
+
 def archive(
     history_dir: Path,
     target: dict,
