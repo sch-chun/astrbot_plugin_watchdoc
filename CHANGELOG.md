@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.2] - 2026-10-08
+
+### Added
+
+- **插件图标**：仓库根目录新增 `logo.png`，AstrBot 会在插件加载时自动识别并展示，无需额外配置。
+
+### Changed
+
+- **配置页分区加载**：右栏「已配置」改为独立加载项，不再阻塞整体框架——框架先淡入，列表独自加载完成后再展开。
+  - 加载态放在「已配置」标题旁，是一个 13px 的局部 spinner；展开走 `grid-template-rows` 高度过渡，纯 CSS，不依赖测高。
+  - 列表在 0 条时显示「暂无监控项」，不再是一片空白。
+- **抓取过程有加载态**：预览区盖一层 spinner 与「正在抓取…」，期间禁用「抓取」和「选取区域」。抓取是真实网络请求（后端超时上限 30 秒），原先只有顶栏一行状态字，整页 HTML 会在毫无提示的情况下一次性替换进来。
+
+### Fixed
+
+- **预览区元素不再溢出预览框**：抓取的页面会连带加载它自己的样式表，其中页面级的 `position: fixed`（导航栏、侧栏等）在 Shadow DOM 里按视口定位，且不被祖先 `overflow` 裁剪，会盖到配置页自己的界面上。改为给 Shadow host 加 `contain: layout`，使其成为 fixed 后代的包含块，把它们收进预览区。
+- **列表加载失败会自己说失败**：监控项接口取不到时，列表此前仍画成「暂无监控项」，等于和顶栏的「监控项加载失败」说的是两回事。现在列表改为显示红字的「加载失败，请刷新页面重试」。
+- **初始化挂住时不再整页白屏**：页面框架要等父窗口的就绪信号才显示，该信号若迟迟不来（既不成功也不失败），此前会一直停在空白状态。现在 5 秒后兜底显示框架，并在顶栏提示「初始化超时：插件接口没有响应，请刷新页面重试」。
+
 ## [0.1.1] - 2026-10-08
 
 ### Fixed

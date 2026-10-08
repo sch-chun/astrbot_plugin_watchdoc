@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-booting>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -16,7 +16,13 @@
 
     <main id="layout" class="layout">
       <section class="preview-wrap">
-        <div id="preview" class="preview-host"></div>
+        <div class="preview-stage">
+          <div id="preview" class="preview-host"></div>
+          <div id="preview-loading" class="loading">
+            <div class="spinner"></div>
+            <span>正在抓取…</span>
+          </div>
+        </div>
         <div id="match-handle" class="handle-h" title="拖动调整命中内容区高度"></div>
         <div class="match-box">
           <div class="match-head">
@@ -66,8 +72,13 @@
         </div>
 
         <div class="panel">
-          <h2>已配置</h2>
-          <ul id="list" class="list"></ul>
+          <h2 class="panel-head">
+            已配置
+            <span id="list-spinner" class="spinner sm" aria-hidden="true"></span>
+          </h2>
+          <div id="list-slot" class="list-slot">
+            <ul id="list" class="list"></ul>
+          </div>
         </div>
       </aside>
     </main>
