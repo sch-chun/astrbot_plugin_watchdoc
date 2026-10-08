@@ -144,10 +144,110 @@ body.resizing {
   user-select: none;
 }
 
+/* 抓取遮罩要盖住预览区，所以给它一个定位父级 */
+.preview-stage {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 .preview-host {
   flex: 1;
   overflow: auto;
   background: var(--bg);
+}
+
+/* ---------- 加载态 ---------- */
+
+.spinner {
+  /* 宽高对 inline 元素无效，而它总是被放进 flex 容器，这里显式声明更稳 */
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+/* 跟在标题后面时收小一档，别抢标题的视觉重量 */
+.spinner.sm {
+  width: 13px;
+  height: 13px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 框架整体淡入：不等列表数据，列表现自己转自己的 */
+.bar,
+.layout {
+  transition: opacity 0.24s ease;
+}
+
+html[data-booting] .bar,
+html[data-booting] .layout {
+  opacity: 0;
+}
+
+/* 「已配置」的局部加载态：标题旁一个 spinner，数据到位后展开列表 */
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-slot {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s ease;
+}
+
+.list-slot > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.list-slot.open {
+  grid-template-rows: 1fr;
+}
+
+.loading {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bg);
+  color: var(--muted);
+  opacity: 0;
+  visibility: hidden;
+  /* visibility 延后到淡出结束再生效，否则元素会立刻消失、看不到过渡 */
+  transition: opacity 0.18s ease, visibility 0s linear 0.18s;
+}
+
+.loading.on {
+  opacity: 1;
+  visibility: visible;
+  /* 出现要立刻，只有消失才需要淡出 */
+  transition: opacity 0.18s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading {
+    transition-duration: 0.01s;
+  }
+
+  .spinner {
+    animation: none;
+  }
 }
 
 .match-box {
@@ -395,6 +495,19 @@ ul {
 .list li.current {
   border-color: var(--accent);
   background: var(--accent-soft);
+}
+
+/* 0 条时说清楚是「没有」而不是「还没加载」，否则展开后是一片空白 */
+.list li.empty {
+  padding: 2px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+}
+
+/* 加载失败就别装成「暂无监控项」，和顶栏的报错保持一致 */
+.list li.empty.fail {
+  color: var(--danger);
 }
 
 .list .top {

@@ -1,7 +1,7 @@
 name: astrbot_plugin_watchdoc
 display_name: Watchdoc
 desc: 定时抓取目标文档，发现变化时生成 diff 并交给 AI 总结，推送到指定会话
-version: v0.1.1
+version: v0.1.2
 author: sch_chun
 repo: https://github.com/sch-chun/astrbot_plugin_watchdoc
 astrbot_version: ">=4.24.0"

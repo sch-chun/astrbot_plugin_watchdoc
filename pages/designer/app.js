@@ -31,6 +31,9 @@ const el = {
   instruction: document.getElementById("f-instruction"),
   save: document.getElementById("save-item"),
   reset: document.getElementById("reset-item"),
+  previewLoading: document.getElementById("preview-loading"),
+  listSpinner: document.getElementById("list-spinner"),
+  listSlot: document.getElementById("list-slot"),
 };
 
 let targets = [];
@@ -39,6 +42,10 @@ let selecting = false;
 let hovered = null;
 let editingId = null;
 let selectedSessions = [];
+// 列表是独立加载项，框架不等它；到位前 renderList() 一律不画
+let listLoaded = false;
+// 拿不到列表时留个标记，让列表自己说失败，而不是画成「暂无监控项」跟顶栏打架
+let listFailed = false;
 // 后端下发，用于把默认指令预填进输入框；用户清空后由后端兜底
 // 初始文案直接取自 HTML，避免同一句话在两处维护
 const INITIAL = {
@@ -135,6 +142,10 @@ function gradeOf(item) {
 function renderPreview(html) {
   el.preview.innerHTML = "";
   const inner = document.createElement("div");
+  // 目标页自己的样式表会原样进来，页面级的 position:fixed（导航、侧栏）
+  // 在 shadow 里按视口定位、不被 overflow 裁剪，会盖到预览框外。
+  // layout 包裹让本元素成为 fixed 后代的包含块，把它们收进预览区。
+  inner.style.contain = "layout";
   el.preview.appendChild(inner);
   shadow = inner.attachShadow({ mode: "open" });
   const box = document.createElement("div");
@@ -309,7 +320,17 @@ async function loadSessions() {
 /* ---------- 监控项 ---------- */
 
 function renderList() {
+  // 数据没到之前列表保持收起，别先渲染出「暂无监控项」再被真实数据顶掉
+  if (!listLoaded) return;
   el.list.innerHTML = "";
+  if (listFailed || !targets.length) {
+    const empty = document.createElement("li");
+    // 失败和真空是两回事：真空说「没有」，失败要说「没拿到」，否则和顶栏的报错对不上
+    empty.className = listFailed ? "empty fail" : "empty";
+    empty.textContent = listFailed ? "加载失败，请刷新页面重试" : "暂无监控项";
+    el.list.appendChild(empty);
+    return;
+  }
   targets.forEach((item, index) => {
     const li = document.createElement("li");
     if (item.id && item.id === editingId) li.classList.add("current");
@@ -382,6 +403,14 @@ function ensureInstructionDefault() {
   if (!el.instruction.value.trim()) el.instruction.value = defaultInstruction;
 }
 
+// 表单面板启动后是隐藏的，只有抓到页面才露出来。默认指令要等一次接口往返，
+// 所以放在「露出来之前」补——用户第一眼看到指令框时它就已经有值，
+// 不会先空着、过一会儿才被填上
+function showForm() {
+  ensureInstructionDefault();
+  el.formPanel.hidden = false;
+}
+
 // 清空到「刚打开页面」的样子：地址栏、预览、命中内容、选择器候选一并清掉。
 // 只在启动和「放弃 / 清空」时用——抓取成功后只补默认值，不碰这些
 function resetPage() {
@@ -408,6 +437,8 @@ function resetPage() {
   // 不会留下「同地址、空选择器」的重复条目
   el.furl.textContent = "—";
   el.selector.value = "";
+  // 启动时这里 defaultInstruction 还是空的（要等一次接口往返），但表单面板此刻
+  // 是隐藏的，露出之前 showForm() 会补上，用户看不到中间的空框
   el.instruction.value = defaultInstruction;
   el.enabled.checked = true;
   selectedSessions = [];
@@ -456,23 +487,30 @@ function setStatus(text) {
   el.status.textContent = text;
 }
 
+// 抓取是真实网络请求，后端超时上限 30s，光靠顶栏一行字撑不住。
+// 遮罩盖住旧预览，抓取完再淡出，新内容就是淡入而不是硬弹出来
+function setPreviewLoading(on) {
+  el.previewLoading.classList.toggle("on", on);
+  el.fetch.disabled = on;
+  el.pick.disabled = on || !shadow;
+}
+
 /* ---------- 事件绑定 ---------- */
 
 async function doFetch(url) {
   if (!url) return setStatus("请先填写网址");
   setStatus("抓取中…");
+  setPreviewLoading(true);
   try {
     const data = await bridge.apiGet("preview", { url });
     renderPreview(data.html);
     highlightMatches(el.selector.value.trim());
-    el.pick.disabled = false;
     el.url.value = url;
     currentUrl = url;
     el.furl.textContent = url;
     // 没抓到页面就无从选区域、也无从判断监控什么，这两块先不露出来
     el.pickPanel.hidden = false;
-    el.formPanel.hidden = false;
-    ensureInstructionDefault();
+    showForm();
     if (!data.textLength || data.textLength < 500) {
       setStatus("抓到的正文很少，该页面可能需要 JS 渲染，无法可视化选取");
     } else {
@@ -480,6 +518,8 @@ async function doFetch(url) {
     }
   } catch (error) {
     setStatus(`抓取失败：${error.message}`);
+  } finally {
+    setPreviewLoading(false);
   }
 }
 
@@ -573,9 +613,43 @@ el.reset.addEventListener("click", resetPage);
 
 /* ---------- 启动 ---------- */
 
-await bridge.ready();
-const loaded = await bridge.apiGet("targets");
-targets = loaded.targets || [];
-defaultInstruction = loaded.default_instruction || "";
-await loadSessions();
-resetPage();
+// 列表自己跑，不与框架互相等待：拿到就展开，拿不到也标失败态由顶栏说明
+async function loadTargets() {
+  try {
+    const loaded = await bridge.apiGet("targets");
+    targets = loaded.targets || [];
+    defaultInstruction = loaded.default_instruction || "";
+  } catch (error) {
+    listFailed = true;
+    setStatus(`监控项加载失败：${error.message}`);
+  }
+  listLoaded = true;
+  el.listSpinner.remove();
+  el.listSlot.classList.add("open");
+  renderList();
+}
+
+// data-booting 让整页 opacity:0，摘不掉就什么都看不见——比看到未加载状态更糟。
+// bridge.ready() 若既不 resolve 也不 reject，try/catch 两个分支都不会走到，
+// 所以单独挂一个超时，保证页面一定露出来
+const BOOT_TIMEOUT_MS = 5000;
+let bootTimedOut = false;
+const bootTimer = setTimeout(() => {
+  bootTimedOut = true;
+  document.documentElement.removeAttribute("data-booting");
+  setStatus("初始化超时：插件接口没有响应，请刷新页面重试");
+}, BOOT_TIMEOUT_MS);
+
+try {
+  // bridge.ready() 只是等上下文注入，几乎瞬时，框架随即淡入
+  await bridge.ready();
+  clearTimeout(bootTimer);
+  resetPage();
+  // 兜底已经把页面露出来了，就别再用空状态盖掉那行超时提示
+  if (!bootTimedOut) document.documentElement.removeAttribute("data-booting");
+  await Promise.all([loadTargets(), loadSessions()]);
+} catch (error) {
+  clearTimeout(bootTimer);
+  document.documentElement.removeAttribute("data-booting");
+  if (!bootTimedOut) setStatus(`初始化失败：${error.message}`);
+}
