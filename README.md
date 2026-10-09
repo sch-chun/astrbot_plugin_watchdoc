@@ -6,7 +6,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.24.0-blueviolet)](https://github.com/AstrBotDevs/AstrBot)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v0.1.2-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.1.3-green)](CHANGELOG.md)
 
 ---
 
@@ -69,6 +69,8 @@ https://github.com/sch-chun/astrbot_plugin_watchdoc
 3. 在右栏填名称、选择器、推送会话、任务指令，点「保存」。
 
 保存即写入插件存储并生效。也可以在命令行用 `/watchdoc probe <url>` 拿到候选清单。
+
+选择器命中内容时，预览下方会弹出「选择器命中内容」底栏，显示该选择器实际会监控到的全文；拖拽其顶栏可调整高度。删除监控项会先弹确认框，避免误删。
 
 推送会话从 AstrBot 已知的会话里选，也可以手动填 UMO（形如 `aiocqhttp:GroupMessage:123456`）。可以填多个；留空则检测到变更只落盘、不推送。
 

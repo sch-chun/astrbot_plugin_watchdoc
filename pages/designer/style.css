@@ -156,6 +156,8 @@ body.resizing {
   flex: 1;
   overflow: auto;
   background: var(--bg);
+  /* 抓取渲染完成后淡入，消除大文档同步建 shadow DOM 时的整块重绘闪烁 */
+  transition: opacity 0.25s ease;
 }
 
 /* ---------- 加载态 ---------- */
@@ -260,7 +262,10 @@ html[data-booting] .layout {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 14px 0;
+  padding: 5px 14px;
+  /* 表头用 panel 底色 + 底部分隔线，和正文区（--bg）拉开层次，避免标题栏/内容栏同色难分 */
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
 }
 
 /* 与右栏面板标题同一档，别和字段名混在一起 */
@@ -299,7 +304,72 @@ html[data-booting] .layout {
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+}
+
+/* 抓取后选择器候选 / 表单面板用 grid 行高 0fr→1fr 展开，把「已配置」列表平滑挤到下方；
+   收起时（无 .open）高度为 0，可见性延迟到收起动画结束后才隐藏，避免被 Tab 聚焦 */
+.collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s ease;
+}
+
+.collapse.open {
+  grid-template-rows: 1fr;
+}
+
+.collapse-inner {
+  overflow: hidden;
+  min-height: 0;
+  visibility: hidden;
+  transition: visibility 0s linear 0.28s;
+}
+
+.collapse.open .collapse-inner {
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+/* 选择器命中内容底栏：默认隐藏，有命中内容时从底部滑出。
+   不挂 .collapse 的 grid 0fr/1fr 动画——底栏高度由拖拽条内联控制（matchText ≤600px），
+   而 grid 的 1fr 轨道在 .preview-wrap 的 flex 列里会被 preview-stage 的 flex:1 挤占，
+   叠加 .collapse-inner 的 overflow:hidden 把拖高部分裁掉，导致拖拽“失灵”。
+   改用 max-height 做高度展开，配合 opacity + translateY 做出弹出感；
+   外层 display:block + flex:0 0 auto，确保展开后高度完全跟随 matchText 内联高度、不被 flex 收缩。 */
+.match-pop {
+  display: block;
+  grid-template-rows: none;
+  flex: 0 0 auto;
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(10px);
+  transition: max-height 0.28s ease, opacity 0.28s ease, transform 0.28s ease;
+}
+
+.match-pop.open {
+  max-height: 680px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 抵消基类 .collapse-inner 的 visibility:hidden / overflow:hidden，高度交给外层 .match-pop 控制。
+   同时恢复 flex 列：#match-handle 靠 flex:0 0 5px 在 flex 上下文里拿到 5px 高才能被抓取；
+   R7 把它包进 block 容器后 flex 失效、空 div 高度 0，是「拖不到」的真正根因 */
+.match-pop .collapse-inner {
+  display: flex;
+  flex-direction: column;
+  visibility: visible;
+  overflow: visible;
+  min-height: 0;
+}
+
+.panel {
+  margin-bottom: 12px;
+}
+
+.side > .panel:last-child {
+  margin-bottom: 0;
 }
 
 .panel {
@@ -536,4 +606,86 @@ ul {
 .remove {
   padding: 3px 8px;
   color: var(--danger);
+}
+
+/* 删除确认模态框：覆盖整页、自带淡入；不依赖原生 confirm（沙箱 iframe 无 allow-modals） */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.18s ease, visibility 0s linear 0.18s;
+}
+
+.modal-overlay.open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 0.18s ease;
+}
+
+.modal {
+  width: min(360px, calc(100% - 32px));
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.3);
+  transform: translateY(8px) scale(0.98);
+  transition: transform 0.18s ease;
+}
+
+.modal-overlay.open .modal {
+  transform: translateY(0) scale(1);
+}
+
+.modal-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.modal-body {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modal-btn {
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.modal-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.modal-btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+[data-theme="dark"] .modal-btn.danger {
+  color: #2a0e0e;
 }

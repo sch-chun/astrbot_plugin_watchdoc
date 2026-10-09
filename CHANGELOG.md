@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.3] - 2026-10-09
+
+### Added
+
+- **配置页面板展开动画**：抓取后「选择器候选」「新建/编辑监控项」面板带展开动画出现，并把「已配置」列表平滑挤到下方（复用 `grid-template-rows` 行高过渡，纯 CSS）。
+- **命中内容底栏默认隐藏、有命中才弹出**：选择器命中内容后从底部淡入，可拖拽顶栏调整高度（56–600px）。
+- **删除确认模态框**：删除监控项前弹出自建模态框确认，避免误删；面板 iframe 沙箱无 `allow-modals`，原生 `confirm()` 会被静默拦截，故用页面内实现。
+- **抓取渲染淡入**：渲染完成后等外部样式表与字体就绪再整体淡入，消除同步重绘与未套样式首帧的闪动。
+
+### Fixed
+
+- **候选选择器误把内部高亮类当候选**：在已高亮区域点选时，不再把 `.watchdoc-match`（预览命中标记）塞进候选。
+- **命中内容底栏拖拽失效**：修正包裹层破坏 flex 上下文导致拖拽把手高度为 0、无法抓取的问题。
+- **命中内容标题栏与正文区分度低**：标题栏加底色与底部分隔线。
+- **慢页面抓取仍闪一下**：等待选择器原用 `rel="stylesheet"` 精确匹配，漏掉 VitePress 等写成 `rel="preload stylesheet"` 的主样式表；改为 `rel~="stylesheet"`，主样式表就绪后才淡入。
+
 ## [0.1.2] - 2026-10-08
 
 ### Added
