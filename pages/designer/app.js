@@ -21,8 +21,8 @@ const el = {
   side: document.getElementById("side"),
   layoutHandle: document.getElementById("layout-handle"),
   matchHandle: document.getElementById("match-handle"),
-  formPanel: document.getElementById("form-panel"),
-  pickPanel: document.getElementById("pick-panel"),
+  pickCollapse: document.getElementById("pick-collapse"),
+  formCollapse: document.getElementById("form-collapse"),
   enabled: document.getElementById("f-enabled"),
   sessionSelect: document.getElementById("f-session-select"),
   sessionChips: document.getElementById("f-sessions"),
@@ -34,6 +34,11 @@ const el = {
   previewLoading: document.getElementById("preview-loading"),
   listSpinner: document.getElementById("list-spinner"),
   listSlot: document.getElementById("list-slot"),
+  confirmModal: document.getElementById("confirm-modal"),
+  confirmText: document.getElementById("confirm-text"),
+  confirmOk: document.getElementById("confirm-ok"),
+  confirmCancel: document.getElementById("confirm-cancel"),
+  matchCollapse: document.getElementById("match-collapse"),
 };
 
 let targets = [];
@@ -101,7 +106,12 @@ function buildCandidates(node, root) {
   };
 
   if (node.id) push(`#${node.id}`);
-  for (const cls of node.classList) push(`.${cls}`);
+  // watchdoc-match 是我们给命中节点打的高亮标记类，不属于页面本身，
+  // 不能当成候选选择器——否则在已高亮区域上点选会把它塞进候选列表
+  for (const cls of node.classList) {
+    if (cls === "watchdoc-match") continue;
+    push(`.${cls}`);
+  }
   push(node.tagName.toLowerCase());
   push(pathOf(node, root));
 
@@ -181,6 +191,7 @@ function highlightMatches(selector) {
     el.selectorHint.textContent = "未填选择器，将监控整页";
     el.matchMeta.textContent = "";
     el.matchText.textContent = "抓取页面后，这里显示选择器实际会监控到的全文";
+    el.matchCollapse.classList.remove("open");
     return;
   }
 
@@ -191,12 +202,14 @@ function highlightMatches(selector) {
     el.selectorHint.textContent = "选择器写法无效";
     el.matchMeta.textContent = "";
     el.matchText.textContent = "（选择器写法无效）";
+    el.matchCollapse.classList.remove("open");
     return;
   }
   if (!nodes.length) {
     el.selectorHint.textContent = "没有命中任何元素";
     el.matchMeta.textContent = "";
     el.matchText.textContent = "";
+    el.matchCollapse.classList.remove("open");
     return;
   }
 
@@ -208,6 +221,7 @@ function highlightMatches(selector) {
   el.matchText.textContent = full || "（命中元素没有文本内容）";
   el.matchMeta.textContent = `命中 ${nodes.length} 处 · ${full.length} 字符`;
   el.selectorHint.textContent = `命中 ${nodes.length} 处，已在预览中高亮`;
+  el.matchCollapse.classList.add("open");
 }
 
 function onHover(event) {
@@ -331,7 +345,7 @@ function renderList() {
     el.list.appendChild(empty);
     return;
   }
-  targets.forEach((item, index) => {
+  targets.forEach((item) => {
     const li = document.createElement("li");
     if (item.id && item.id === editingId) li.classList.add("current");
 
@@ -350,14 +364,18 @@ function renderList() {
     const del = document.createElement("button");
     del.className = "remove";
     del.textContent = "删除";
-    del.addEventListener("click", async (event) => {
+    del.addEventListener("click", (event) => {
       event.stopPropagation(); // 否则会冒泡到 li，把刚删掉的项又填回表单
-      targets.splice(index, 1);
-      if (editingId === item.id) {
-        editingId = null;
-        setFormMode("");
-      }
-      await persist();
+      const name = item.name || item.id;
+      openConfirm(`确认删除监控项「${name}」？删除后不可恢复。`, () => {
+        const i = targets.findIndex((t) => t.id === item.id);
+        if (i >= 0) targets.splice(i, 1);
+        if (editingId === item.id) {
+          editingId = null;
+          setFormMode("");
+        }
+        persist();
+      });
     });
 
     top.append(state, name, del);
@@ -408,7 +426,7 @@ function ensureInstructionDefault() {
 // 不会先空着、过一会儿才被填上
 function showForm() {
   ensureInstructionDefault();
-  el.formPanel.hidden = false;
+  el.formCollapse.classList.add("open");
 }
 
 // 清空到「刚打开页面」的样子：地址栏、预览、命中内容、选择器候选一并清掉。
@@ -430,8 +448,9 @@ function resetPage() {
   el.matchText.textContent = INITIAL.matchText;
   el.matchMeta.textContent = "";
   el.selectorHint.textContent = INITIAL.selectorHint;
-  el.pickPanel.hidden = true;
-  el.formPanel.hidden = true;
+  el.pickCollapse.classList.remove("open");
+  el.formCollapse.classList.remove("open");
+  el.matchCollapse.classList.remove("open");
   el.name.value = "";
   // 地址也一起清掉：没有正在配置的页面时保存会被拦住，
   // 不会留下「同地址、空选择器」的重复条目
@@ -487,6 +506,38 @@ function setStatus(text) {
   el.status.textContent = text;
 }
 
+// 删除确认模态框：页面内自建 UI，不依赖原生 confirm（沙箱 iframe 无 allow-modals，会被拦截）。
+// 每次打开时绑定确定/取消/背景点击/ESC 监听，关闭时一并解绑，避免监听器泄漏
+function openConfirm(message, onConfirm) {
+  el.confirmText.textContent = message;
+  el.confirmModal.classList.add("open");
+  el.confirmCancel.focus();
+
+  const close = () => {
+    el.confirmModal.classList.remove("open");
+    el.confirmOk.removeEventListener("click", onOk);
+    el.confirmCancel.removeEventListener("click", onCancel);
+    el.confirmModal.removeEventListener("click", onBackdrop);
+    document.removeEventListener("keydown", onKey);
+  };
+  const onOk = () => {
+    close();
+    onConfirm();
+  };
+  const onCancel = () => close();
+  const onBackdrop = (event) => {
+    if (event.target === el.confirmModal) onCancel();
+  };
+  const onKey = (event) => {
+    if (event.key === "Escape") onCancel();
+  };
+
+  el.confirmOk.addEventListener("click", onOk);
+  el.confirmCancel.addEventListener("click", onCancel);
+  el.confirmModal.addEventListener("click", onBackdrop);
+  document.addEventListener("keydown", onKey);
+}
+
 // 抓取是真实网络请求，后端超时上限 30s，光靠顶栏一行字撑不住。
 // 遮罩盖住旧预览，抓取完再淡出，新内容就是淡入而不是硬弹出来
 function setPreviewLoading(on) {
@@ -497,10 +548,41 @@ function setPreviewLoading(on) {
 
 /* ---------- 事件绑定 ---------- */
 
+// 预览里目标页常带外部 <link rel=stylesheet>，shadow DOM 中它们是异步加载的，
+// 首帧往往还没套上样式就被画出来，于是出现「先一帧裸布局、再闪到终态」的闪动。
+// 等这些样式表（及字体）真正就绪再淡入，才能消掉这帧。
+function whenLinkReady(link) {
+  if (link.sheet) return Promise.resolve();
+  return new Promise((resolve) => {
+    link.addEventListener("load", resolve, { once: true });
+    link.addEventListener("error", resolve, { once: true });
+  });
+}
+
+async function whenPreviewStyled(root) {
+  // 用 ~= 而非 =：很多站点（如 VitePress）主样式表写成 rel="preload stylesheet"，
+  // 精确匹配 rel="stylesheet" 会漏掉它，导致关键布局 CSS 没被等待、提前淡入就闪裸布局
+  const links = [...root.querySelectorAll('link[rel~="stylesheet"]')];
+  await Promise.all(links.map(whenLinkReady));
+  if (document.fonts?.ready) {
+    try {
+      await document.fonts.ready;
+    } catch {
+      // 字体就绪失败不影响淡入，忽略
+    }
+  }
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise((resolve) => setTimeout(resolve, ms))]);
+}
+
 async function doFetch(url) {
   if (!url) return setStatus("请先填写网址");
   setStatus("抓取中…");
   setPreviewLoading(true);
+  // 渲染期间先把预览隐掉：大文档同步建 shadow DOM 会整块重绘，直接显示会闪一下
+  el.preview.style.opacity = "0";
   try {
     const data = await bridge.apiGet("preview", { url });
     renderPreview(data.html);
@@ -509,17 +591,26 @@ async function doFetch(url) {
     currentUrl = url;
     el.furl.textContent = url;
     // 没抓到页面就无从选区域、也无从判断监控什么，这两块先不露出来
-    el.pickPanel.hidden = false;
+    el.pickCollapse.classList.add("open");
     showForm();
     if (!data.textLength || data.textLength < 500) {
       setStatus("抓到的正文很少，该页面可能需要 JS 渲染，无法可视化选取");
     } else {
       setStatus(`已加载（正文 ${data.textLength} 字符）`);
     }
-  } catch (error) {
-    setStatus(`抓取失败：${error.message}`);
-  } finally {
+    // 等外部样式表/字体真正就绪再淡入（超时兜底，避免样式卡死时一直转圈）；
+    // 等待期间 spinner 仍盖着隐掉的预览，用户看到的是正常的加载态
+    await withTimeout(whenPreviewStyled(shadow), 2000);
     setPreviewLoading(false);
+    // 双 rAF：先保证有一次 opacity:0 的绘制，否则浏览器可能把「置 0/置 1」合并成一次提交而看不到过渡
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+    el.preview.style.opacity = "1";
+  } catch (error) {
+    setPreviewLoading(false);
+    el.preview.style.opacity = "1";
+    setStatus(`抓取失败：${error.message}`);
   }
 }
 
@@ -549,6 +640,9 @@ el.save.addEventListener("click", async () => {
   if (index >= 0) targets[index] = record;
   else targets.push(record);
   editingId = id;
+  // 保存后回到初始态：清空预览与地址、收起面板（行为同「放弃」）；
+  // 先 resetPage 再 persist，persist 内的「已保存」提示才不会被 resetPage 清掉
+  resetPage();
   await persist();
 });
 

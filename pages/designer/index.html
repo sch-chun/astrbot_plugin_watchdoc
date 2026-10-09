@@ -23,13 +23,17 @@
             <span>正在抓取…</span>
           </div>
         </div>
-        <div id="match-handle" class="handle-h" title="拖动调整命中内容区高度"></div>
-        <div class="match-box">
-          <div class="match-head">
-            <span class="match-title">选择器命中内容</span>
-            <span id="match-meta" class="muted small"></span>
+        <div class="collapse match-pop" id="match-collapse">
+          <div class="collapse-inner">
+            <div id="match-handle" class="handle-h" title="拖动调整命中内容区高度"></div>
+            <div class="match-box">
+              <div class="match-head">
+                <span class="match-title">选择器命中内容</span>
+                <span id="match-meta" class="muted small"></span>
+              </div>
+              <pre id="match-text" class="match-text">抓取页面后，这里显示选择器实际会监控到的全文</pre>
+            </div>
           </div>
-          <pre id="match-text" class="match-text">抓取页面后，这里显示选择器实际会监控到的全文</pre>
         </div>
         <div id="hint" class="hint">
           输入网址并抓取，然后点「选取区域」，在页面上点选要监控的正文块。
@@ -39,36 +43,44 @@
       <div id="layout-handle" class="handle-v" title="拖动调整右侧栏宽度"></div>
 
       <aside id="side" class="side">
-        <div class="panel" id="pick-panel" hidden>
-          <h2>选择器候选</h2>
-          <p id="pick-empty" class="muted">尚未选取任何区域。</p>
-          <ul id="candidates" class="candidates"></ul>
+        <div class="collapse" id="pick-collapse">
+          <div class="collapse-inner">
+            <div class="panel" id="pick-panel">
+              <h2>选择器候选</h2>
+              <p id="pick-empty" class="muted">尚未选取任何区域。</p>
+              <ul id="candidates" class="candidates"></ul>
+            </div>
+          </div>
         </div>
 
-        <div class="panel" id="form-panel" hidden>
-          <h2 id="form-title">新建监控项</h2>
-          <label>地址<span id="f-url" class="url-line">—</span></label>
-          <label>名称<input id="f-name" type="text" placeholder="显示名称" /></label>
-          <label>选择器<input id="f-selector" type="text" placeholder="从候选里挑一个" /></label>
-          <p id="f-selector-hint" class="muted small">抓取页面后，这里会显示选择器命中了什么</p>
-          <label>推送会话
-            <select id="f-session-select"></select>
-          </label>
-          <div id="f-sessions" class="chips"></div>
-          <div class="row">
-            <input id="f-session-manual" type="text" placeholder="手动填 UMO" />
-            <button id="add-session">添加</button>
+        <div class="collapse" id="form-collapse">
+          <div class="collapse-inner">
+            <div class="panel" id="form-panel">
+              <h2 id="form-title">新建监控项</h2>
+              <label>地址<span id="f-url" class="url-line">—</span></label>
+              <label>名称<input id="f-name" type="text" placeholder="显示名称" /></label>
+              <label>选择器<input id="f-selector" type="text" placeholder="从候选里挑一个" /></label>
+              <p id="f-selector-hint" class="muted small">抓取页面后，这里会显示选择器命中了什么</p>
+              <label>推送会话
+                <select id="f-session-select"></select>
+              </label>
+              <div id="f-sessions" class="chips"></div>
+              <div class="row">
+                <input id="f-session-manual" type="text" placeholder="手动填 UMO" />
+                <button id="add-session">添加</button>
+              </div>
+              <p class="muted small">可添加多个，变更会推送到每一个；留空则只落盘</p>
+              <label>任务指令<textarea id="f-instruction" rows="3" placeholder="清空则回到内置默认指令"></textarea></label>
+              <p class="muted small">随 diff 一起送给模型，默认是「总结变化 / 影响 / 需做的调整」，可改成自己关心的角度</p>
+              <div class="row">
+                <label class="inline"><input id="f-enabled" type="checkbox" checked />启用</label>
+                <span class="spacer"></span>
+                <button id="save-item" class="primary">保存</button>
+                <button id="reset-item">清空</button>
+              </div>
+              <p class="muted small">保存后立即写入插件存储并生效</p>
+            </div>
           </div>
-          <p class="muted small">可添加多个，变更会推送到每一个；留空则只落盘</p>
-          <label>任务指令<textarea id="f-instruction" rows="3" placeholder="清空则回到内置默认指令"></textarea></label>
-          <p class="muted small">随 diff 一起送给模型，默认是「总结变化 / 影响 / 需做的调整」，可改成自己关心的角度</p>
-          <div class="row">
-            <label class="inline"><input id="f-enabled" type="checkbox" checked />启用</label>
-            <span class="spacer"></span>
-            <button id="save-item" class="primary">保存</button>
-            <button id="reset-item">清空</button>
-          </div>
-          <p class="muted small">保存后立即写入插件存储并生效</p>
         </div>
 
         <div class="panel">
@@ -82,6 +94,17 @@
         </div>
       </aside>
     </main>
+
+    <div class="modal-overlay" id="confirm-modal">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <h3 class="modal-title" id="confirm-title">删除监控项</h3>
+        <p class="modal-body" id="confirm-text"></p>
+        <div class="modal-actions">
+          <button type="button" id="confirm-cancel" class="modal-btn">取消</button>
+          <button type="button" id="confirm-ok" class="modal-btn danger">删除</button>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="./app.js"></script>
   </body>
