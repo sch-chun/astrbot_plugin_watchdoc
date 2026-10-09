@@ -640,11 +640,10 @@ el.save.addEventListener("click", async () => {
   if (index >= 0) targets[index] = record;
   else targets.push(record);
   editingId = id;
-  await persist();
-  // 保存后回到初始态：清空预览与地址、收起表单/选区面板，行为同「放弃」；
-  // 先 resetPage 再提示，既回到干净界面又保留一行保存确认
+  // 保存后回到初始态：清空预览与地址、收起面板（行为同「放弃」）；
+  // 先 resetPage 再 persist，persist 内的「已保存」提示才不会被 resetPage 清掉
   resetPage();
-  setStatus(`已保存 ${targets.length} 个监控项`);
+  await persist();
 });
 
 let selectorTimer = null;

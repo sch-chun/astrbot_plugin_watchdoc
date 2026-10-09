@@ -243,8 +243,9 @@ html[data-booting] .layout {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .loading {
-    transition-duration: 0.01s;
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 
   .spinner {
