@@ -64,6 +64,46 @@ let defaultInstruction = "";
 // 顶部输入框里手打但没抓取的内容不算数
 let currentUrl = "";
 
+/* ---------- 列表伸缩动画 ---------- */
+
+// 列表内容增减（增删监控项、增删推送会话、切换点选候选）时，让容器高度平滑伸缩。
+// 面板自身的「显隐」由 .collapse / .list-slot 的 grid 0fr↔1fr 负责，
+// 这里只在面板已经展开（高度 > 0）时才接管内容高度变化，避免两套动画打架。
+// 面板刚打开那一刻高度还约等于 0，直接走 grid 的显隐动画，本函数自动跳过。
+function animateList(node, mutate) {
+  // 取消上一次未播完的动画，否则旧 transitionend 会清掉新动画的内联样式
+  if (node._resizeDone) {
+    node.removeEventListener("transitionend", node._resizeDone);
+    node._resizeDone = null;
+  }
+  // 最近的显隐容器：.list-slot（监控项列表）或 .collapse-inner（候选 / 会话面板）
+  const slot = node.closest(".collapse-inner, .list-slot");
+  const visible = !slot || Math.round(slot.getBoundingClientRect().height) > 0;
+  const prev = node.getBoundingClientRect().height; // 渲染高度，含进行中的过渡
+  mutate();
+  if (!visible) return; // 面板收起中，交给 grid 显隐动画
+  const next = node.scrollHeight; // 重渲染后的真实内容高度
+  if (Math.abs(next - prev) < 1) return; // 高度没变，不必动
+  node.style.transition = "none";
+  node.style.height = `${prev}px`;
+  node.style.overflow = "hidden";
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      node.style.transition = "height 0.28s ease";
+      node.style.height = `${next}px`;
+      const done = () => {
+        node.style.height = "";
+        node.style.overflow = "";
+        node.style.transition = "";
+        node.removeEventListener("transitionend", done);
+        node._resizeDone = null;
+      };
+      node._resizeDone = done;
+      node.addEventListener("transitionend", done);
+    });
+  });
+}
+
 /* ---------- 选择器生成 ---------- */
 
 // 与后端 _looks_stable 保持同一套规则
@@ -120,14 +160,19 @@ function buildCandidates(node, root) {
   return raw
     .map((selector) => {
       let count = 0;
+      let hasText = false;
       try {
-        count = root.querySelectorAll(selector).length;
+        const nodes = root.querySelectorAll(selector);
+        count = nodes.length;
+        // 监控目标抓的是文本：命中元素全都没文字的选择器没用——
+        // 典型是点到图标/图片/纯装饰容器，这种候选填进去也只是监控空内容
+        hasText = [...nodes].some((n) => (n.textContent || "").trim().length > 0);
       } catch {
         count = 0;
       }
-      return { selector, count, stable: isStable(selector) };
+      return { selector, count, stable: isStable(selector), hasText };
     })
-    .filter((item) => item.count > 0)
+    .filter((item) => item.count > 0 && item.hasText)
     .sort(
       (a, b) =>
         a.count - b.count ||
@@ -245,62 +290,75 @@ function onClick(event) {
   const root = shadow;
   const list = buildCandidates(node, root);
   el.pickEmpty.style.display = "none";
-  el.candidates.innerHTML = "";
 
-  for (const item of list) {
-    const grade = gradeOf(item);
-    const li = document.createElement("li");
-    const tag = document.createElement("span");
-    tag.className = `tag ${grade.cls}`;
-    tag.textContent = grade.label;
-    const code = document.createElement("code");
-    code.textContent = item.selector;
-    const meta = document.createElement("span");
-    meta.className = "sel";
-    meta.textContent = item.count === 1 ? "命中 1" : `共 ${item.count}`;
-    li.append(tag, code, meta);
-    li.addEventListener("click", () => {
-      el.selector.value = item.selector;
-      highlightMatches(item.selector);
-      for (const other of el.candidates.children) other.style.borderColor = "";
-      li.style.borderColor = "var(--accent)";
-    });
-    el.candidates.appendChild(li);
+  // 候选列表增减（点不同元素 / 候选被「无文本」过滤掉）时平滑伸缩
+  animateList(el.candidates, () => {
+    el.candidates.innerHTML = "";
+
+    for (const item of list) {
+      const grade = gradeOf(item);
+      const li = document.createElement("li");
+      const tag = document.createElement("span");
+      tag.className = `tag ${grade.cls}`;
+      tag.textContent = grade.label;
+      const code = document.createElement("code");
+      code.textContent = item.selector;
+      const meta = document.createElement("span");
+      meta.className = "sel";
+      meta.textContent = item.count === 1 ? "命中 1" : `共 ${item.count}`;
+      li.append(tag, code, meta);
+      li.addEventListener("click", () => {
+        el.selector.value = item.selector;
+        highlightMatches(item.selector);
+        for (const other of el.candidates.children) other.style.borderColor = "";
+        li.style.borderColor = "var(--accent)";
+      });
+      el.candidates.appendChild(li);
+    }
+  });
+
+  if (list.length === 0) {
+    // 候选全被「无文本」过滤掉（点到图标/图片/装饰容器等），给一句说明，
+    // 否则列表空着却仍提示「挑一个精确候选」会误导
+    el.hint.textContent = `已选中 <${node.tagName.toLowerCase()}>，该元素没有文本内容，无法作为监控目标；请点选带文字的区域。`;
+  } else {
+    const best = list[0];
+    const advice =
+      best && best.count > 1
+        ? "所有候选都会命中多个区域，选中的话这些块会被拼在一起，容易混入导航或页脚。"
+        : "挑一个标着「精确」的候选填入右侧的选择器。";
+    el.hint.textContent = `已选中 <${node.tagName.toLowerCase()}>，${advice}`;
   }
-
-  const best = list[0];
-  const advice =
-    best && best.count > 1
-      ? "所有候选都会命中多个区域，选中的话这些块会被拼在一起，容易混入导航或页脚。"
-      : "挑一个标着「精确」的候选填入右侧的选择器。";
-  el.hint.textContent = `已选中 <${node.tagName.toLowerCase()}>，${advice}`;
 }
 
 /* ---------- 推送会话 ---------- */
 
 function renderSessionChips() {
-  el.sessionChips.innerHTML = "";
-  if (!selectedSessions.length) {
-    const empty = document.createElement("span");
-    empty.className = "muted small";
-    empty.textContent = "未配置推送会话";
-    el.sessionChips.appendChild(empty);
-    return;
-  }
-  selectedSessions.forEach((umo, index) => {
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.textContent = umo;
-    const close = document.createElement("button");
-    close.className = "chip-close";
-    close.textContent = "×";
-    close.title = "移除";
-    close.addEventListener("click", () => {
-      selectedSessions.splice(index, 1);
-      renderSessionChips();
+  // 增删推送会话时，会话面板里的 chip 列表平滑伸缩
+  animateList(el.sessionChips, () => {
+    el.sessionChips.innerHTML = "";
+    if (!selectedSessions.length) {
+      const empty = document.createElement("span");
+      empty.className = "muted small";
+      empty.textContent = "未配置推送会话";
+      el.sessionChips.appendChild(empty);
+      return;
+    }
+    selectedSessions.forEach((umo, index) => {
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent = umo;
+      const close = document.createElement("button");
+      close.className = "chip-close";
+      close.textContent = "×";
+      close.title = "移除";
+      close.addEventListener("click", () => {
+        selectedSessions.splice(index, 1);
+        renderSessionChips();
+      });
+      chip.appendChild(close);
+      el.sessionChips.appendChild(chip);
     });
-    chip.appendChild(close);
-    el.sessionChips.appendChild(chip);
   });
 }
 
@@ -336,62 +394,66 @@ async function loadSessions() {
 function renderList() {
   // 数据没到之前列表保持收起，别先渲染出「暂无监控项」再被真实数据顶掉
   if (!listLoaded) return;
-  el.list.innerHTML = "";
-  if (listFailed || !targets.length) {
-    const empty = document.createElement("li");
-    // 失败和真空是两回事：真空说「没有」，失败要说「没拿到」，否则和顶栏的报错对不上
-    empty.className = listFailed ? "empty fail" : "empty";
-    empty.textContent = listFailed ? "加载失败，请刷新页面重试" : "暂无监控项";
-    el.list.appendChild(empty);
-    return;
-  }
-  targets.forEach((item) => {
-    const li = document.createElement("li");
-    if (item.id && item.id === editingId) li.classList.add("current");
+  // 增删监控项、切换编辑高亮时，列表高度平滑伸缩；
+  // 面板刚展开（loadTargets 里 .open 后立刻调用）那次高度还≈0，本函数会自动跳过，交给 grid 显隐动画
+  animateList(el.list, () => {
+    el.list.innerHTML = "";
+    if (listFailed || !targets.length) {
+      const empty = document.createElement("li");
+      // 失败和真空是两回事：真空说「没有」，失败要说「没拿到」，否则和顶栏的报错对不上
+      empty.className = listFailed ? "empty fail" : "empty";
+      empty.textContent = listFailed ? "加载失败，请刷新页面重试" : "暂无监控项";
+      el.list.appendChild(empty);
+      return;
+    }
+    targets.forEach((item) => {
+      const li = document.createElement("li");
+      if (item.id && item.id === editingId) li.classList.add("current");
 
-    const top = document.createElement("div");
-    top.className = "top";
+      const top = document.createElement("div");
+      top.className = "top";
 
-    const on = item.enabled !== false;
-    const state = document.createElement("span");
-    state.className = `tag ${on ? "stable" : "weak"}`;
-    state.textContent = on ? "启用" : "停用";
+      const on = item.enabled !== false;
+      const state = document.createElement("span");
+      state.className = `tag ${on ? "stable" : "weak"}`;
+      state.textContent = on ? "启用" : "停用";
 
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = item.name || item.id;
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = item.name || item.id;
 
-    const del = document.createElement("button");
-    del.className = "remove";
-    del.textContent = "删除";
-    del.addEventListener("click", (event) => {
-      event.stopPropagation(); // 否则会冒泡到 li，把刚删掉的项又填回表单
-      const name = item.name || item.id;
-      openConfirm(`确认删除监控项「${name}」？删除后不可恢复。`, () => {
-        const i = targets.findIndex((t) => t.id === item.id);
-        if (i >= 0) targets.splice(i, 1);
-        if (editingId === item.id) {
-          editingId = null;
-          setFormMode("");
-        }
-        persist();
+      const del = document.createElement("button");
+      del.className = "remove";
+      del.textContent = "删除";
+      del.addEventListener("click", (event) => {
+        event.stopPropagation(); // 否则会冒泡到 li，把刚删掉的项又填回表单
+        const name = item.name || item.id;
+        openConfirm(`确认删除监控项「${name}」？删除后不可恢复。`, () => {
+          const i = targets.findIndex((t) => t.id === item.id);
+          if (i >= 0) targets.splice(i, 1);
+          if (editingId === item.id) {
+            editingId = null;
+            setFormMode("");
+          }
+          persist();
+        });
       });
+
+      top.append(state, name, del);
+
+      const sel = document.createElement("span");
+      sel.className = "sel";
+      const pushCount = (item.sessions || []).length;
+      sel.textContent = `${item.selector || "（整页，未指定选择器）"} · 推送 ${pushCount} 个会话`;
+
+      li.addEventListener("click", async () => {
+        fillForm(item);
+        // 选中即重新抓取，便于直接对照页面调整选择器
+        if (item.url) await doFetch(item.url);
+      });
+      li.append(top, sel);
+      el.list.appendChild(li);
     });
-
-    top.append(state, name, del);
-
-    const sel = document.createElement("span");
-    sel.className = "sel";
-    const pushCount = (item.sessions || []).length;
-    sel.textContent = `${item.selector || "（整页，未指定选择器）"} · 推送 ${pushCount} 个会话`;
-
-    li.addEventListener("click", async () => {
-      fillForm(item);
-      // 选中即重新抓取，便于直接对照页面调整选择器
-      if (item.url) await doFetch(item.url);
-    });
-    li.append(top, sel);
-    el.list.appendChild(li);
   });
 }
 
@@ -586,6 +648,14 @@ async function doFetch(url) {
   try {
     const data = await bridge.apiGet("preview", { url });
     renderPreview(data.html);
+    // 新抓的页面与上一页无关：清掉上一轮点选区留下的候选、空提示复位、提示语回初始，
+    // 否则换链接再抓，旧候选仍挂在列表、空提示被永久隐藏，误导用户以为还能用
+    // 候选面板此刻可能正开着（上一轮点选过），裸清会「啪」地空掉——包进 animateList 收起过渡
+    animateList(el.candidates, () => {
+      el.candidates.innerHTML = "";
+    });
+    el.pickEmpty.style.display = "";
+    el.hint.textContent = INITIAL.hint;
     highlightMatches(el.selector.value.trim());
     el.url.value = url;
     currentUrl = url;
@@ -674,12 +744,20 @@ el.sessionManual.addEventListener("keydown", (event) => {
 
 // 沙箱 iframe 没有 allow-same-origin，读 localStorage 会抛 SecurityError，
 // 所以尺寸不持久化，刷新即恢复默认
-function makeDraggable(handle, apply) {
+function makeDraggable(handle, apply, onStart) {
   handle.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     handle.setPointerCapture(event.pointerId);
     document.body.classList.add("resizing");
-    const onMove = (moveEvent) => apply(moveEvent.clientX, moveEvent.clientY);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    // 按下即取基准（如起始高度），后续按增量算，避免每帧用绝对坐标重算导致的跳变
+    if (onStart) onStart();
+    const onMove = (moveEvent) => {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      apply(dx, dy, moveEvent.clientX, moveEvent.clientY);
+    };
     const onUp = () => {
       handle.removeEventListener("pointermove", onMove);
       handle.removeEventListener("pointerup", onUp);
@@ -690,18 +768,27 @@ function makeDraggable(handle, apply) {
   });
 }
 
-makeDraggable(el.layoutHandle, (x) => {
+makeDraggable(el.layoutHandle, (_dx, _dy, x) => {
   const right = el.layout.getBoundingClientRect().right;
   el.side.style.width = `${Math.min(720, Math.max(280, right - x))}px`;
 });
 
-makeDraggable(el.matchHandle, (_x, y) => {
-  const bottom = el.matchText.getBoundingClientRect().bottom;
-  const height = Math.min(600, Math.max(56, bottom - y));
-  // height 和 max-height 都得写成内联样式：CSS 里的 max-height 会把更大的值削回去
-  el.matchText.style.height = `${height}px`;
-  el.matchText.style.maxHeight = `${height}px`;
-});
+// 拖拽条在表头顶部、整块吸附在预览区底部：以按下时的高度为基准，按指针纵向增量调高。
+// 向上拖（dy<0）变高，故用 基准 - dy；不再用 bottom - y 绝对算，否则会把表头+拖拽条高度
+// 算进 matchText、一抓起就跳高约 25px、拖拽条脱离光标。
+let matchBaseHeight = 0;
+makeDraggable(
+  el.matchHandle,
+  (_x, dy) => {
+    const height = Math.min(600, Math.max(56, matchBaseHeight - dy));
+    // height 和 max-height 都得写成内联样式：CSS 里的 max-height 会把更大的值削回去
+    el.matchText.style.height = `${height}px`;
+    el.matchText.style.maxHeight = `${height}px`;
+  },
+  () => {
+    matchBaseHeight = el.matchText.offsetHeight;
+  },
+);
 
 el.reset.addEventListener("click", resetPage);
 
