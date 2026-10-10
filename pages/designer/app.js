@@ -135,6 +135,30 @@ function pathOf(node, root) {
   return parts.join(" > ");
 }
 
+// 只数可见文本（排除 <script>/<style>/<template>），否则内联样式/脚本会虚增文本量，
+// 让「整页壳层」的占比算不准、漏过拦截
+function visibleTextLen(node) {
+  let len = 0;
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+  let n;
+  while ((n = walker.nextNode())) {
+    const p = n.parentElement;
+    if (p && /^(?:script|style|template|noscript)$/i.test(p.tagName)) continue;
+    len += n.nodeValue.length;
+  }
+  return len;
+}
+
+// 祖先含站点导航/侧栏即视为布局壳层（选了等于把导航也监控进去），跳过。
+// 只认 class 含 sidebar/nav/menu 的 nav/aside；纯 toc（目录）不算壳层，保留。
+function containsSiteChrome(anc) {
+  for (const el of anc.querySelectorAll("nav, aside")) {
+    const cls = el.getAttribute("class") || "";
+    if (/sidebar|nav|menu/i.test(cls)) return true;
+  }
+  return false;
+}
+
 function buildCandidates(node, root) {
   const seen = new Set();
   const raw = [];
@@ -153,6 +177,41 @@ function buildCandidates(node, root) {
     push(`.${cls}`);
   }
   push(node.tagName.toLowerCase());
+
+  // 上溯祖先，抛出稳定钩子（.vp-doc / #app 等），让用户能选容器而非脆弱的叶子路径。
+  // 只取带 id / class 的祖先——无钩子的裸 div/section 写不出稳定选择器，跳过。
+  const rootLen = visibleTextLen(root) || 1;
+  let anc = node.parentElement;
+  while (anc && anc !== root && anc.nodeType === 1) {
+    // 整页级祖先（html/body/应用壳）选了等于监控整页，跳过
+    if (/^(?:html|body)$/i.test(anc.tagName)) {
+      anc = anc.parentElement;
+      continue;
+    }
+    // 含站点导航/侧栏的布局壳层（.Layout/.has-aside/#app 等）跳过，避免监控整页+导航
+    if (containsSiteChrome(anc)) {
+      anc = anc.parentElement;
+      continue;
+    }
+    if (visibleTextLen(anc) >= rootLen * 0.9) {
+      anc = anc.parentElement;
+      continue;
+    }
+    if (anc.id && !/[0-9a-f]{6,}/.test(anc.id)) {
+      const hook = `#${anc.id}`;
+      push(hook);
+      push(`${hook} ${pathOf(node, anc)}`);
+    }
+    for (const cls of anc.classList) {
+      if (cls === "watchdoc-match") continue;
+      if (/[0-9a-f]{6,}/.test(cls)) continue; // 构建产物 hash 类，随构建变化、无意义
+      const hook = `.${cls}`;
+      push(hook);
+      push(`${hook} ${pathOf(node, anc)}`);
+    }
+    anc = anc.parentElement;
+  }
+
   push(pathOf(node, root));
 
   // 命中多个区域的优先级最低：它会把命中的块全部拼起来，
@@ -292,12 +351,15 @@ function onClick(event) {
   el.pickEmpty.style.display = "none";
 
   // 候选列表增减（点不同元素 / 候选被「无文本」过滤掉）时平滑伸缩
+  const VISIBLE = 5;
   animateList(el.candidates, () => {
     el.candidates.innerHTML = "";
+    el.candidates.classList.remove("expanded"); // 每次新选都回到折叠态
 
-    for (const item of list) {
+    list.forEach((item, i) => {
       const grade = gradeOf(item);
       const li = document.createElement("li");
+      if (i >= VISIBLE) li.classList.add("cand-extra"); // 超出前 5 条的候选先藏起
       const tag = document.createElement("span");
       tag.className = `tag ${grade.cls}`;
       tag.textContent = grade.label;
@@ -314,6 +376,21 @@ function onClick(event) {
         li.style.borderColor = "var(--accent)";
       });
       el.candidates.appendChild(li);
+    });
+
+    // 候选多时折叠，避免列表刷屏；展开/收起也走动画，不硬跳
+    if (list.length > VISIBLE) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "more-btn";
+      more.textContent = `展开更多（${list.length - VISIBLE}）`;
+      more.addEventListener("click", () => {
+        animateList(el.candidates, () => {
+          const on = el.candidates.classList.toggle("expanded");
+          more.textContent = on ? "收起" : `展开更多（${list.length - VISIBLE}）`;
+        });
+      });
+      el.candidates.appendChild(more);
     }
   });
 
