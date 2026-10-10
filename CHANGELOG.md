@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.4] - 2026-10-09
+
+### Added
+
+- **右侧列表伸缩动画**：候选选择器 / 推送会话 / 已配置三个列表在内容增减时平滑伸缩，不再硬跳；复用通用 `animateList` 助手，仅面板已展开时接管高度，未展开时交给面板自身的展开动画。
+
+### Fixed
+
+- **命中内容表头视觉居中**：CJK 字形落在基线、行盒下方留整段 descent + 1px 下边框，原对称 padding 压不住偏置，看起来上窄下宽；改为标题行高收敛到 1.2、上方比下方多 1px 的不对称 padding（3/2），并清零表头内元信息误用的 `.small` 10px 下边距（它会在 flex 表头里把容器往下撑、标题下方留一大截空白）。
+- **命中内容底栏拖拽跳变**：拖拽条在表头顶部，原用 `matchText 底缘 − 指针 Y` 绝对算高度，把表头 + 拖拽条约 25px 算进 `matchText`，一抓起就跳高、拖拽条脱离光标、观感像以底部为基准；改为以按下时刻的高度为基准、按指针纵向增量调高，跳变消失。
+- **换链接再抓取时候选未清空**：换页再抓，上一轮点选区留下的候选仍挂在列表、空提示被永久隐藏；现每次抓取先以动画收起候选列表、复位空提示、提示语回初始，避免候选面板开着时列表硬跳空掉（与本轮列表伸缩动画同一套 `animateList`）。
+- **候选误含无文本元素**：点到图标 / 图片 / 装饰容器时其选择器命中内容为空，仍会作为候选；现过滤掉全文为空的元素，避免填进去监控空内容。
+
 ## [0.1.3] - 2026-10-09
 
 ### Added

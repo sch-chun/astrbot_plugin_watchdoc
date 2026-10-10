@@ -6,7 +6,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.24.0-blueviolet)](https://github.com/AstrBotDevs/AstrBot)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v0.1.3-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.1.4-green)](CHANGELOG.md)
 
 ---
 

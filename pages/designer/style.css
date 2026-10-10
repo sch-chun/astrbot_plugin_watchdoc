@@ -263,7 +263,10 @@ html[data-booting] .layout {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  padding: 5px 14px;
+  /* 上方 3px、下方 2px：多出的 1px 抵消底部 1px 分隔线，文字上下到边缘视觉对称。
+     CJK 字形落基线、行盒上下半导相同（line-height 1.2 ≈1.4px），故 3/2 居中；
+     #match-meta 的 .small 10px 下边距已清零（见下方规则），标题下方不再被撑高 */
+  padding: 3px 14px 2px;
   /* 表头用 panel 底色 + 底部分隔线，和正文区（--bg）拉开层次，避免标题栏/内容栏同色难分 */
   background: var(--panel);
   border-bottom: 1px solid var(--border);
@@ -273,6 +276,16 @@ html[data-booting] .layout {
 .match-title {
   font-size: 14px;
   font-weight: 600;
+  /* 收紧行高：标题继承了 body 的 1.6，行盒被撑大、CJK 字形又落在基线上，
+     导致文字在行盒里偏上、下方留出整段 descent，看起来「下边宽一截」 */
+  line-height: 1.2;
+}
+
+/* 命中面板里的元信息（命中 N 处 · N 字符）是表头内的标签，不是表单下方的说明文字，
+   不能沿用 .small 的 margin-top/bottom（4px/10px）——那 10px 下边距会在 flex 表头里把容器往下撑、
+   在标题正下方留一大截空白。这里清零，标题下方的留白只由 descent + 1px 边框决定 */
+#match-meta {
+  margin: 0;
 }
 
 .match-text {
