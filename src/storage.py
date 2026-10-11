@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -63,11 +64,30 @@ def normalize_targets(data: object) -> list[dict]:
     if not isinstance(data, list):
         return []
     for item in data:
-        if not isinstance(item, dict) or "sessions" not in item:
-            # 缺字段等价于空列表，不硬塞字段进去改写用户的配置
+        if not isinstance(item, dict):
             continue
+        # documents：新结构，每项至少含 url；收敛成去重后的非空列表供下游使用
+        raw_docs = item.get("documents")
+        if isinstance(raw_docs, list):
+            docs = []
+            for d in raw_docs:
+                if not isinstance(d, dict):
+                    continue
+                url = str(d.get("url") or "").strip()
+                if not url:
+                    continue
+                docs.append(
+                    {
+                        "url": url,
+                        "selector": str(d.get("selector") or ""),
+                        "name": str(d.get("name") or "").strip(),
+                    }
+                )
+            item["documents"] = docs
         # sessions 由 Page 填写，也可能是手改出来的字符串；统一收敛成
         # 去重后的非空列表，下游就不必各自防御了
+        if "sessions" not in item:
+            continue
         raw_sessions = item.get("sessions")
         values = (
             raw_sessions
@@ -86,10 +106,11 @@ def normalize_targets(data: object) -> list[dict]:
 def drop_snapshots(
     snapshot_dir: Path, previous: list[dict], current: list[dict]
 ) -> None:
-    """删除已移除监控项的基线快照。
+    """删除已移除监控项，以及监控项内被删文档的基线快照。
 
-    留着旧快照会让同 ID 的新监控项拿它当基线，第一次检查就误报变更。
-    变更存档是有意保留的记录，不在这里动。
+    留着旧快照会让同 ID 的新监控项拿它当基线，第一次检查就误报变更；
+    监控项内文档减少时，多余文档的快照也应当清理。变更存档是有意保留
+    的记录，不在这里动。
 
     Args:
         snapshot_dir: 快照目录。
@@ -99,14 +120,27 @@ def drop_snapshots(
     kept = {str(item.get("id") or "") for item in current}
     for item in previous:
         tid = str(item.get("id") or "")
-        if tid and tid not in kept:
+        if not tid or tid not in kept:
+            # 整个监控项删除：连分组目录一起清，并兼容旧版单文件基线
+            shutil.rmtree(snapshot_dir / safe_name(tid), ignore_errors=True)
             (snapshot_dir / f"{safe_name(tid)}.md").unlink(missing_ok=True)
+            continue
+        # 监控项保留但文档可能减少：裁掉不再监控的文档快照
+        cur = next((c for c in current if str(c.get("id") or "") == tid), None)
+        kept_slugs = {
+            safe_name(str(d.get("url") or "")) for d in (cur.get("documents") or [])
+        }
+        doc_dir = snapshot_dir / safe_name(tid)
+        if doc_dir.is_dir():
+            for f in doc_dir.glob("*.md"):
+                if f.stem not in kept_slugs:
+                    f.unlink(missing_ok=True)
 
 
 def archive(
     history_dir: Path,
     target: dict,
-    diff: str,
+    change: dict,
     deliveries: list[tuple[str, list[str]]],
 ) -> None:
     """把本次变更存档到插件数据目录。
@@ -114,25 +148,30 @@ def archive(
     Args:
         history_dir: 存档根目录。
         target: 监控项配置。
-        diff: unified diff 文本。
+        change: 含 docs 的变更数据。
         deliveries: (总结, 会话列表) 的列表，多份时只存档第一份。
     """
+    docs = change.get("docs") or []
     summary = deliveries[0][0] if deliveries else ""
     # 多份总结只在文风上有差别，变更事实一致，因此只留一份并标注份数
     persona_note = ""
     if len(deliveries) > 1:
         persona_note = f"- 人格: 按 {len(deliveries)} 种人格分别生成，此处仅存第一份\n"
+    doc_blocks = "".join(
+        f"### {d.get('name') or d.get('url')}\n- 地址: {d.get('url')}\n\n"
+        f"```diff\n{d.get('diff') or ''}\n```\n\n"
+        for d in docs
+    )
     folder = history_dir / safe_name(str(target.get("id") or "target"))
     folder.mkdir(parents=True, exist_ok=True)
     # 文件名带微秒：秒级精度会让同一秒内的多次变更互相覆盖
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     (folder / f"{stamp}.md").write_text(
         f"# {target.get('name') or target.get('id')}\n\n"
-        f"- 地址: {target.get('url')}\n"
         f"- 时间: {datetime.now():%Y-%m-%d %H:%M:%S}\n"
         f"{persona_note}\n"
         f"## AI 总结\n\n{summary}\n\n"
-        f"## Diff\n\n```diff\n{diff}\n```\n",
+        f"## 变化文档（{len(docs)} 篇）\n\n{doc_blocks}",
         encoding="utf-8",
     )
     # 页面选择器失效时可能每次都判定为变更，限制存档数量避免无限增长

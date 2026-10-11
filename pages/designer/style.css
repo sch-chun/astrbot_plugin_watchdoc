@@ -730,3 +730,64 @@ ul {
 [data-theme="dark"] .modal-btn.danger {
   color: #2a0e0e;
 }
+
+/* 已添加文档列表：和候选 / 监控项列表同一套视觉语言 */
+.doc-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.doc-list li.muted {
+  padding: 2px 0;
+}
+
+.doc-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.doc-item.current {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.doc-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.doc-edit,
+.doc-del {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.doc-del {
+  color: var(--danger);
+}
+
+#add-doc {
+  width: 100%;
+  margin-bottom: 8px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+}
+
+#add-doc:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}

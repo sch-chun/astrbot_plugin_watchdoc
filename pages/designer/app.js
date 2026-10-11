@@ -31,6 +31,8 @@ const el = {
   instruction: document.getElementById("f-instruction"),
   save: document.getElementById("save-item"),
   reset: document.getElementById("reset-item"),
+  docList: document.getElementById("doc-list"),
+  addDoc: document.getElementById("add-doc"),
   previewLoading: document.getElementById("preview-loading"),
   listSpinner: document.getElementById("list-spinner"),
   listSlot: document.getElementById("list-slot"),
@@ -48,6 +50,8 @@ let hovered = null;
 let editingId = null;
 let selectedSessions = [];
 let allSessions = []; // 已知会话原始列表（缓存，供排序重渲染复用）
+let currentDocs = []; // 当前监控项已添加的文档（{url, selector}）
+let editingDocIndex = null; // 正在编辑的文档下标；null 表示新增草稿
 // 列表是独立加载项，框架不等它；到位前 renderList() 一律不画
 let listLoaded = false;
 // 拿不到列表时留个标记，让列表自己说失败，而不是画成「暂无监控项」跟顶栏打架
@@ -568,13 +572,15 @@ function renderList() {
 
       const sel = document.createElement("span");
       sel.className = "sel";
+      const docCount = (item.documents || []).length || (item.url ? 1 : 0);
       const pushCount = (item.sessions || []).length;
-      sel.textContent = `${item.selector || "（整页，未指定选择器）"} · 推送 ${pushCount} 个会话`;
+      sel.textContent = `${docCount} 篇文档 · 推送 ${pushCount} 个会话`;
 
       li.addEventListener("click", async () => {
         fillForm(item);
         // 选中即重新抓取，便于直接对照页面调整选择器
-        if (item.url) await doFetch(item.url);
+        const firstDoc = (item.documents && item.documents[0]) || (item.url ? { url: item.url } : null);
+        if (firstDoc) await doFetch(firstDoc.url);
       });
       li.append(top, sel);
       el.list.appendChild(li);
@@ -591,16 +597,22 @@ function setFormMode(label) {
 
 function fillForm(item) {
   editingId = item.id || null;
-  currentUrl = item.url || "";
-  el.furl.textContent = currentUrl || "—";
+  // 兼容旧版单 url：没有 documents 时退化为单文档
+  currentDocs = (item.documents || [])
+    .map((d) => ({ url: String(d.url || ""), selector: String(d.selector || "") }))
+    .filter((d) => d.url);
+  if (!currentDocs.length && item.url) {
+    currentDocs = [{ url: item.url, selector: item.selector || "" }];
+  }
+  editingDocIndex = currentDocs.length ? 0 : null;
   el.name.value = item.name || "";
-  el.selector.value = item.selector || "";
   el.instruction.value = item.instruction || defaultInstruction;
   el.enabled.checked = item.enabled !== false;
   selectedSessions = [...(item.sessions || [])];
   renderSessionChips();
   setFormMode(item.name || item.id || "");
   renderSessionOptions(); // 切换编辑项时，置顶集合随「当前项」变化
+  loadDraftDoc(); // 把第一篇（或空草稿）填进表单字段并抓取预览
   renderList();
 }
 
@@ -622,6 +634,8 @@ function showForm() {
 function resetPage() {
   editingId = null;
   currentUrl = "";
+  currentDocs = [];
+  editingDocIndex = null;
   selecting = false;
   hovered = null;
   shadow = null;
@@ -652,7 +666,82 @@ function resetPage() {
   renderSessionChips();
   setFormMode("");
   renderSessionOptions(); // 回到「新建」：无当前项，所有被用会话都置顶
+  renderDocList();
   renderList();
+}
+
+// 把当前表单草稿并入 currentDocs；editingDocIndex 决定是更新还是追加
+function commitDraft() {
+  const url = el.url.value.trim();
+  if (!url) return;
+  const selector = el.selector.value.trim();
+  const entry = { url, selector };
+  if (editingDocIndex !== null && currentDocs[editingDocIndex]) {
+    currentDocs[editingDocIndex] = entry;
+  } else if (!currentDocs.some((d) => d.url === url)) {
+    currentDocs.push(entry);
+  }
+  renderDocList();
+}
+
+// 把 currentDocs[editingDocIndex]（或空草稿）填进表单字段，并抓取预览
+function loadDraftDoc() {
+  const doc = editingDocIndex !== null ? currentDocs[editingDocIndex] : null;
+  const url = doc ? doc.url : "";
+  el.url.value = url;
+  el.selector.value = doc ? doc.selector : "";
+  currentUrl = url;
+  el.furl.textContent = url || "—";
+  if (url) {
+    doFetch(url);
+  } else {
+    el.preview.innerHTML = "";
+    el.pickCollapse.classList.remove("open");
+  }
+  renderDocList();
+}
+
+// 渲染「已添加文档」列表，支持编辑 / 移除
+function renderDocList() {
+  el.docList.innerHTML = "";
+  if (!currentDocs.length) {
+    const empty = document.createElement("li");
+    empty.className = "muted small";
+    empty.textContent = "尚未添加文档";
+    el.docList.appendChild(empty);
+    return;
+  }
+  currentDocs.forEach((doc, idx) => {
+    const li = document.createElement("li");
+    li.className = "doc-item" + (idx === editingDocIndex ? " current" : "");
+    const label = document.createElement("span");
+    label.className = "doc-url";
+    label.textContent = `${idx + 1}. ${doc.url}`;
+    const edit = document.createElement("button");
+    edit.className = "doc-edit";
+    edit.type = "button";
+    edit.textContent = "编辑";
+    edit.addEventListener("click", (e) => {
+      e.stopPropagation();
+      editingDocIndex = idx;
+      loadDraftDoc();
+    });
+    const del = document.createElement("button");
+    del.className = "doc-del";
+    del.type = "button";
+    del.textContent = "移除";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      currentDocs.splice(idx, 1);
+      if (editingDocIndex === idx) editingDocIndex = null;
+      else if (editingDocIndex > idx) editingDocIndex--;
+      loadDraftDoc();
+    });
+    li.appendChild(label);
+    li.appendChild(edit);
+    li.appendChild(del);
+    el.docList.appendChild(li);
+  });
 }
 
 function slugify(url) {
@@ -813,6 +902,21 @@ async function doFetch(url) {
 
 el.fetch.addEventListener("click", () => doFetch(el.url.value.trim()));
 
+el.addDoc.addEventListener("click", () => {
+  commitDraft(); // 先把当前草稿并入列表
+  editingDocIndex = null; // 进入「新增」草稿态
+  // 清空地址栏、选择器、文档预览，允许再输入一篇并抓取（用户原话）
+  el.url.value = "";
+  el.selector.value = "";
+  currentUrl = "";
+  el.furl.textContent = "—";
+  el.preview.innerHTML = "";
+  el.pickCollapse.classList.remove("open");
+  el.hint.textContent = INITIAL.hint;
+  renderDocList();
+  setStatus("已添加上篇文档，继续输入下一篇地址并抓取");
+});
+
 el.pick.addEventListener("click", () => {
   selecting = !selecting;
   el.pick.textContent = selecting ? "点页面选区" : "选取区域";
@@ -820,15 +924,16 @@ el.pick.addEventListener("click", () => {
 });
 
 el.save.addEventListener("click", async () => {
-  const url = currentUrl;
-  if (!url) return setStatus("请先抓取页面");
-  // 编辑已有项时沿用原标识：换了网址也还是同一条记录，否则会分裂成两条
-  const id = editingId || nextId(url);
+  commitDraft();
+  if (!currentDocs.length) return setStatus("请先抓取至少一个文档");
+  // 编辑已有项时沿用原标识：换了网址也还是同一条记录，否则会分裂成两条；
+  // 标识只在新建时按首篇文档地址推导一次，之后经 editingId 保留，避免增删文档导致快照孤儿
+  const firstUrl = currentDocs[0].url;
+  const id = editingId || nextId(firstUrl);
   const record = {
     id,
     name: el.name.value.trim() || id,
-    url,
-    selector: el.selector.value.trim(),
+    documents: currentDocs.map((d) => ({ url: d.url, selector: d.selector })),
     instruction: el.instruction.value.trim(),
     enabled: el.enabled.checked,
     sessions: [...selectedSessions],
