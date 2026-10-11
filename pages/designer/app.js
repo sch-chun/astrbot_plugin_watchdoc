@@ -113,7 +113,7 @@ function animateList(node, mutate) {
 /* ---------- 选择器生成 ---------- */
 
 // 构建产物 hash 类/id：6+ 位十六进制且至少含一个数字，
-// 否则 .facade / .decade / .facebook / #VPContent（含 onten）这类纯字母串会被误判成 hash
+// 否则 .facade / .decade / accede 这类纯字母（全为 hex 字符）类名会被误判成 hash
 const HASH_RE = /(?=[0-9a-f]*[0-9])[0-9a-f]{6,}/;
 
 // 与后端 _looks_stable 保持同一套规则
