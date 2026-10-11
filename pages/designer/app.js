@@ -47,6 +47,7 @@ let selecting = false;
 let hovered = null;
 let editingId = null;
 let selectedSessions = [];
+let allSessions = []; // 已知会话原始列表（缓存，供排序重渲染复用）
 // 列表是独立加载项，框架不等它；到位前 renderList() 一律不画
 let listLoaded = false;
 // 拿不到列表时留个标记，让列表自己说失败，而不是画成「暂无监控项」跟顶栏打架
@@ -464,21 +465,50 @@ function addSession(umo) {
   renderSessionChips();
 }
 
+// 被其它监控项使用的会话置顶：从下拉里更快挑到共享会话
+function usedByOtherItems() {
+  const used = new Set();
+  for (const t of targets) {
+    if (t.id && t.id === editingId) continue; // 当前正在编辑的项自身会话不入「其它」
+    for (const s of t.sessions || []) used.add(s);
+  }
+  return used;
+}
+
+// 渲染下拉：被其它项使用的排前面，组内稳定保持原顺序
+function renderSessionOptions() {
+  const select = el.sessionSelect;
+  select.innerHTML = "";
+  if (!allSessions.length) {
+    const loading = document.createElement("option");
+    loading.value = "";
+    loading.textContent = "（会话列表加载中…）";
+    select.appendChild(loading);
+    return;
+  }
+  const used = usedByOtherItems();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = allSessions.length ? "选择会话…" : "暂无已知会话";
+  select.appendChild(placeholder);
+  const sorted = [...allSessions].sort((a, b) => {
+    const ra = used.has(a.umo) ? 0 : 1;
+    const rb = used.has(b.umo) ? 0 : 1;
+    return ra - rb;
+  });
+  for (const item of sorted) {
+    const option = document.createElement("option");
+    option.value = item.umo;
+    option.textContent = item.platform ? `${item.platform} · ${item.umo}` : item.umo;
+    select.appendChild(option);
+  }
+}
+
 async function loadSessions() {
   try {
     const data = await bridge.apiGet("sessions");
-    const list = data.sessions || [];
-    el.sessionSelect.innerHTML = "";
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = list.length ? "选择会话…" : "暂无已知会话";
-    el.sessionSelect.appendChild(placeholder);
-    for (const item of list) {
-      const option = document.createElement("option");
-      option.value = item.umo;
-      option.textContent = item.platform ? `${item.platform} · ${item.umo}` : item.umo;
-      el.sessionSelect.appendChild(option);
-    }
+    allSessions = data.sessions || [];
+    renderSessionOptions();
   } catch (error) {
     setStatus(`会话列表加载失败：${error.message}`);
   }
@@ -570,6 +600,7 @@ function fillForm(item) {
   selectedSessions = [...(item.sessions || [])];
   renderSessionChips();
   setFormMode(item.name || item.id || "");
+  renderSessionOptions(); // 切换编辑项时，置顶集合随「当前项」变化
   renderList();
 }
 
@@ -620,6 +651,7 @@ function resetPage() {
   selectedSessions = [];
   renderSessionChips();
   setFormMode("");
+  renderSessionOptions(); // 回到「新建」：无当前项，所有被用会话都置顶
   renderList();
 }
 
@@ -895,6 +927,8 @@ async function loadTargets() {
     const loaded = await bridge.apiGet("targets");
     targets = loaded.targets || [];
     defaultInstruction = loaded.default_instruction || "";
+    // 监控项到齐后再排一次会话下拉，置顶集合才准确
+    renderSessionOptions();
   } catch (error) {
     listFailed = true;
     setStatus(`监控项加载失败：${error.message}`);

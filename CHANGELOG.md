@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.6] - 2026-10-11
+
+### Added
+
+- **推送会话下拉置顶共享会话**：下拉里的「被其它监控项使用的推送会话」排到最前（组内保持原顺序），从一长串会话里更快挑到复用率高的；当前正在编辑项自身的会话不计入「其它」，避免已选中的重复置顶。
+
 ## [0.1.5] - 2026-10-10
 
 ### Added
