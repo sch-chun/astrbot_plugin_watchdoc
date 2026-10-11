@@ -524,6 +524,33 @@ ul {
   color: var(--warn);
 }
 
+.tag.anchored {
+  background: rgba(185, 118, 10, 0.16);
+  color: #b9760a;
+}
+
+/* 候选超过前 5 条时折叠，展开更多按钮揭示其余 */
+.candidates:not(.expanded) .cand-extra {
+  display: none;
+}
+
+.more-btn {
+  width: 100%;
+  margin-top: 2px;
+  padding: 5px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted, var(--text));
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.more-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;

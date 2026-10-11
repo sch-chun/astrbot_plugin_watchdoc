@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.5] - 2026-10-10
+
+### Added
+
+- **候选生成上溯祖先稳定钩子**：点选元素后，除自身 `id`/`class`/`tagName` 与叶子 `nth-child` 路径外，额外向上遍历带 `id`/`class` 的祖先，生成「稳定钩子」候选（如 `.vp-doc`/`#VPContent`）与「钩子 + 锚定子路径」组合（如 `.vp-doc > …`）。在 VitePress 等文档站可直接选内容容器，而非脆弱的叶子层级 `nth-child` 链；无钩子的裸 `div`/`section` 写不出稳定选择器，自动跳过。
+- **候选列表限长折叠**：候选超过 5 条时折叠，以「展开更多（N）」按钮揭示其余，展开/收起复用 `animateList` 平滑过渡，避免列表刷屏、硬跳。
+
+### Fixed
+
+- **祖先文本占比虚增导致壳层漏拦截**：祖先文本占比原用 `textContent` 统计，会把内联 `<style>`/`<script>` 也算进去、虚增整页文本量，使应用壳层（`#app`/`.Layout`，内部仅含真实内容 + 侧栏）占比算不到 0.9 阈值而漏过拦截；改为 `visibleTextLen`（TreeWalker 跳过 `script`/`style`/`template`/`noscript` 的可见文本长度）后，壳层正确识别并跳过，内容级容器（`.VPDoc`/`#VPContent`）稳定浮现。
+
+### Added
+
+- **候选评级新增「锚定」中间档**：选择器以稳定容器（id/class 钩子）开头、叶子仍用 `nth-child` 时（如 `.vp-doc div:nth-child(2) > p`）标「锚定」——锚在稳定容器上、比纯位置链 `div > div:nth-child(3) > span` 更稳，但仍会随容器内部结构变动失效，介于「精确」与「易失效」之间。
+
+### Fixed
+
+- **祖先上溯循环改用 `break` 终止**：`containsSiteChrome` 与 `visibleTextLen(anc) >= 90%` 都随祖先上溯单调（越往上越成立），原 `continue` 只是把已成立的跳过重扫十几遍子树；改 `break` 行为不变、help.aliyun 几万节点页点一下省几百 ms。
+- **hash 类误判修正**：`/[0-9a-f]{6,}/` 把 `.facade`/`.decade`/`.facebook`/`#VPContent`（含 `ontent`）这类纯字母串当构建 hash 跳过；改为要求至少含一个数字，稳定钩子不再漏。
+- **`animateList` 重入**：「展开更多 / 收起」是同一按钮，连点会真触发双 `requestAnimationFrame` 重入、高度错乱；存下 rAF 句柄，`cancelAnimationFrame` 取消上一次未播完的动画。
+
 ## [0.1.4] - 2026-10-09
 
 ### Added

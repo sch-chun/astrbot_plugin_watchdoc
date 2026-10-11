@@ -71,7 +71,12 @@ let currentUrl = "";
 // 这里只在面板已经展开（高度 > 0）时才接管内容高度变化，避免两套动画打架。
 // 面板刚打开那一刻高度还约等于 0，直接走 grid 的显隐动画，本函数自动跳过。
 function animateList(node, mutate) {
-  // 取消上一次未播完的动画，否则旧 transitionend 会清掉新动画的内联样式
+  // 取消上一次未播完的动画（含挂起的双 rAF 与 transitionend 监听），避免重入导致高度错乱。
+  // 「展开更多 / 收起」是同一个按钮，连点会真触发重入，必须 cancel 掉上一次的 rAF
+  if (node._resizeRAF) {
+    cancelAnimationFrame(node._resizeRAF);
+    node._resizeRAF = null;
+  }
   if (node._resizeDone) {
     node.removeEventListener("transitionend", node._resizeDone);
     node._resizeDone = null;
@@ -87,8 +92,9 @@ function animateList(node, mutate) {
   node.style.transition = "none";
   node.style.height = `${prev}px`;
   node.style.overflow = "hidden";
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
+  node._resizeRAF = requestAnimationFrame(() => {
+    node._resizeRAF = requestAnimationFrame(() => {
+      node._resizeRAF = null;
       node.style.transition = "height 0.28s ease";
       node.style.height = `${next}px`;
       const done = () => {
@@ -106,11 +112,23 @@ function animateList(node, mutate) {
 
 /* ---------- 选择器生成 ---------- */
 
+// 构建产物 hash 类/id：6+ 位十六进制且至少含一个数字，
+// 否则 .facade / .decade / .facebook / #VPContent（含 onten）这类纯字母串会被误判成 hash
+const HASH_RE = /(?=[0-9a-f]*[0-9])[0-9a-f]{6,}/;
+
 // 与后端 _looks_stable 保持同一套规则
 function isStable(sel) {
   if (/nth-child|nth-of-type/.test(sel)) return false;
-  if (/[0-9a-f]{6,}/.test(sel)) return false;
+  if (HASH_RE.test(sel)) return false;
   return (sel.match(/\./g) || []).length <= 2;
+}
+
+// 中间档：选择器以稳定钩子（id/class，无 nth-child/hash）开头，
+// 但叶子用了 nth-child——锚定到稳定容器，比纯位置链更稳，仍会随容器内部结构变动失效
+function isAnchored(sel) {
+  if (!/nth-child|nth-of-type/.test(sel)) return false;
+  const head = sel.split(/\s|>|~|\+/)[0];
+  return isStable(head);
 }
 
 function pathOf(node, root) {
@@ -135,6 +153,30 @@ function pathOf(node, root) {
   return parts.join(" > ");
 }
 
+// 只数可见文本（排除 <script>/<style>/<template>），否则内联样式/脚本会虚增文本量，
+// 让「整页壳层」的占比算不准、漏过拦截
+function visibleTextLen(node) {
+  let len = 0;
+  const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+  let n;
+  while ((n = walker.nextNode())) {
+    const p = n.parentElement;
+    if (p && /^(?:script|style|template|noscript)$/i.test(p.tagName)) continue;
+    len += n.nodeValue.length;
+  }
+  return len;
+}
+
+// 祖先含站点导航/侧栏即视为布局壳层（选了等于把导航也监控进去），跳过。
+// 只认 class 含 sidebar/nav/menu 的 nav/aside；纯 toc（目录）不算壳层，保留。
+function containsSiteChrome(anc) {
+  for (const el of anc.querySelectorAll("nav, aside")) {
+    const cls = el.getAttribute("class") || "";
+    if (/sidebar|nav|menu/i.test(cls)) return true;
+  }
+  return false;
+}
+
 function buildCandidates(node, root) {
   const seen = new Set();
   const raw = [];
@@ -153,6 +195,38 @@ function buildCandidates(node, root) {
     push(`.${cls}`);
   }
   push(node.tagName.toLowerCase());
+
+  // 上溯祖先，抛出稳定钩子（.vp-doc / #app 等），让用户能选容器而非脆弱的叶子路径。
+  // 只取带 id / class 的祖先——无钩子的裸 div/section 写不出稳定选择器，跳过。
+  const rootLen = visibleTextLen(root) || 1;
+  let anc = node.parentElement;
+  while (anc && anc !== root && anc.nodeType === 1) {
+    // 整页级祖先（html/body/应用壳）选了等于监控整页，跳过
+    if (/^(?:html|body)$/i.test(anc.tagName)) {
+      anc = anc.parentElement;
+      continue;
+    }
+    // 含站点导航/侧栏的布局壳层（.Layout/.has-aside/#app 等）跳过，避免监控整页+导航。
+    // 祖先越往上越包含导航，单调性成立，直接 break（continue 只是白扫十几遍子树）
+    if (containsSiteChrome(anc)) break;
+    // 整页级祖先：文本占比随上溯只增不减，单调成立，直接 break。
+    // 二者都单调——一旦成立更上面的祖先必然也成立，break 行为不变、纯省扫描
+    if (visibleTextLen(anc) >= rootLen * 0.9) break;
+    if (anc.id && !HASH_RE.test(anc.id)) {
+      const hook = `#${anc.id}`;
+      push(hook);
+      push(`${hook} ${pathOf(node, anc)}`);
+    }
+    for (const cls of anc.classList) {
+      if (cls === "watchdoc-match") continue;
+      if (HASH_RE.test(cls)) continue; // 构建产物 hash 类（含数字才算），随构建变化、无意义
+      const hook = `.${cls}`;
+      push(hook);
+      push(`${hook} ${pathOf(node, anc)}`);
+    }
+    anc = anc.parentElement;
+  }
+
   push(pathOf(node, root));
 
   // 命中多个区域的优先级最低：它会把命中的块全部拼起来，
@@ -170,13 +244,13 @@ function buildCandidates(node, root) {
       } catch {
         count = 0;
       }
-      return { selector, count, stable: isStable(selector), hasText };
+      return { selector, count, stable: isStable(selector), anchored: isAnchored(selector), hasText };
     })
     .filter((item) => item.count > 0 && item.hasText)
     .sort(
       (a, b) =>
         a.count - b.count ||
-        Number(b.stable) - Number(a.stable) ||
+        (b.stable ? 2 : b.anchored ? 1 : 0) - (a.stable ? 2 : a.anchored ? 1 : 0) ||
         a.selector.length - b.selector.length,
     );
 }
@@ -186,10 +260,13 @@ function gradeOf(item) {
   if (item.count > 1) {
     return { label: `命中 ${item.count} 处`, cls: "weak" };
   }
-  if (!item.stable) {
-    return { label: "易失效", cls: "weak" };
+  if (item.stable) {
+    return { label: "精确", cls: "stable" };
   }
-  return { label: "精确", cls: "stable" };
+  if (item.anchored) {
+    return { label: "锚定", cls: "anchored" };
+  }
+  return { label: "易失效", cls: "weak" };
 }
 
 /* ---------- 预览与选取 ---------- */
@@ -292,12 +369,15 @@ function onClick(event) {
   el.pickEmpty.style.display = "none";
 
   // 候选列表增减（点不同元素 / 候选被「无文本」过滤掉）时平滑伸缩
+  const VISIBLE = 5;
   animateList(el.candidates, () => {
     el.candidates.innerHTML = "";
+    el.candidates.classList.remove("expanded"); // 每次新选都回到折叠态
 
-    for (const item of list) {
+    list.forEach((item, i) => {
       const grade = gradeOf(item);
       const li = document.createElement("li");
+      if (i >= VISIBLE) li.classList.add("cand-extra"); // 超出前 5 条的候选先藏起
       const tag = document.createElement("span");
       tag.className = `tag ${grade.cls}`;
       tag.textContent = grade.label;
@@ -314,6 +394,21 @@ function onClick(event) {
         li.style.borderColor = "var(--accent)";
       });
       el.candidates.appendChild(li);
+    });
+
+    // 候选多时折叠，避免列表刷屏；展开/收起也走动画，不硬跳
+    if (list.length > VISIBLE) {
+      const more = document.createElement("button");
+      more.type = "button";
+      more.className = "more-btn";
+      more.textContent = `展开更多（${list.length - VISIBLE}）`;
+      more.addEventListener("click", () => {
+        animateList(el.candidates, () => {
+          const on = el.candidates.classList.toggle("expanded");
+          more.textContent = on ? "收起" : `展开更多（${list.length - VISIBLE}）`;
+        });
+      });
+      el.candidates.appendChild(more);
     }
   });
 
