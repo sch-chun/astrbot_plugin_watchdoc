@@ -71,7 +71,12 @@ let currentUrl = "";
 // 这里只在面板已经展开（高度 > 0）时才接管内容高度变化，避免两套动画打架。
 // 面板刚打开那一刻高度还约等于 0，直接走 grid 的显隐动画，本函数自动跳过。
 function animateList(node, mutate) {
-  // 取消上一次未播完的动画，否则旧 transitionend 会清掉新动画的内联样式
+  // 取消上一次未播完的动画（含挂起的双 rAF 与 transitionend 监听），避免重入导致高度错乱。
+  // 「展开更多 / 收起」是同一个按钮，连点会真触发重入，必须 cancel 掉上一次的 rAF
+  if (node._resizeRAF) {
+    cancelAnimationFrame(node._resizeRAF);
+    node._resizeRAF = null;
+  }
   if (node._resizeDone) {
     node.removeEventListener("transitionend", node._resizeDone);
     node._resizeDone = null;
@@ -87,8 +92,9 @@ function animateList(node, mutate) {
   node.style.transition = "none";
   node.style.height = `${prev}px`;
   node.style.overflow = "hidden";
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
+  node._resizeRAF = requestAnimationFrame(() => {
+    node._resizeRAF = requestAnimationFrame(() => {
+      node._resizeRAF = null;
       node.style.transition = "height 0.28s ease";
       node.style.height = `${next}px`;
       const done = () => {
@@ -106,11 +112,23 @@ function animateList(node, mutate) {
 
 /* ---------- 选择器生成 ---------- */
 
+// 构建产物 hash 类/id：6+ 位十六进制且至少含一个数字，
+// 否则 .facade / .decade / .facebook / #VPContent（含 onten）这类纯字母串会被误判成 hash
+const HASH_RE = /(?=[0-9a-f]*[0-9])[0-9a-f]{6,}/;
+
 // 与后端 _looks_stable 保持同一套规则
 function isStable(sel) {
   if (/nth-child|nth-of-type/.test(sel)) return false;
-  if (/[0-9a-f]{6,}/.test(sel)) return false;
+  if (HASH_RE.test(sel)) return false;
   return (sel.match(/\./g) || []).length <= 2;
+}
+
+// 中间档：选择器以稳定钩子（id/class，无 nth-child/hash）开头，
+// 但叶子用了 nth-child——锚定到稳定容器，比纯位置链更稳，仍会随容器内部结构变动失效
+function isAnchored(sel) {
+  if (!/nth-child|nth-of-type/.test(sel)) return false;
+  const head = sel.split(/\s|>|~|\+/)[0];
+  return isStable(head);
 }
 
 function pathOf(node, root) {
@@ -188,23 +206,20 @@ function buildCandidates(node, root) {
       anc = anc.parentElement;
       continue;
     }
-    // 含站点导航/侧栏的布局壳层（.Layout/.has-aside/#app 等）跳过，避免监控整页+导航
-    if (containsSiteChrome(anc)) {
-      anc = anc.parentElement;
-      continue;
-    }
-    if (visibleTextLen(anc) >= rootLen * 0.9) {
-      anc = anc.parentElement;
-      continue;
-    }
-    if (anc.id && !/[0-9a-f]{6,}/.test(anc.id)) {
+    // 含站点导航/侧栏的布局壳层（.Layout/.has-aside/#app 等）跳过，避免监控整页+导航。
+    // 祖先越往上越包含导航，单调性成立，直接 break（continue 只是白扫十几遍子树）
+    if (containsSiteChrome(anc)) break;
+    // 整页级祖先：文本占比随上溯只增不减，单调成立，直接 break。
+    // 二者都单调——一旦成立更上面的祖先必然也成立，break 行为不变、纯省扫描
+    if (visibleTextLen(anc) >= rootLen * 0.9) break;
+    if (anc.id && !HASH_RE.test(anc.id)) {
       const hook = `#${anc.id}`;
       push(hook);
       push(`${hook} ${pathOf(node, anc)}`);
     }
     for (const cls of anc.classList) {
       if (cls === "watchdoc-match") continue;
-      if (/[0-9a-f]{6,}/.test(cls)) continue; // 构建产物 hash 类，随构建变化、无意义
+      if (HASH_RE.test(cls)) continue; // 构建产物 hash 类（含数字才算），随构建变化、无意义
       const hook = `.${cls}`;
       push(hook);
       push(`${hook} ${pathOf(node, anc)}`);
@@ -229,13 +244,13 @@ function buildCandidates(node, root) {
       } catch {
         count = 0;
       }
-      return { selector, count, stable: isStable(selector), hasText };
+      return { selector, count, stable: isStable(selector), anchored: isAnchored(selector), hasText };
     })
     .filter((item) => item.count > 0 && item.hasText)
     .sort(
       (a, b) =>
         a.count - b.count ||
-        Number(b.stable) - Number(a.stable) ||
+        (b.stable ? 2 : b.anchored ? 1 : 0) - (a.stable ? 2 : a.anchored ? 1 : 0) ||
         a.selector.length - b.selector.length,
     );
 }
@@ -245,10 +260,13 @@ function gradeOf(item) {
   if (item.count > 1) {
     return { label: `命中 ${item.count} 处`, cls: "weak" };
   }
-  if (!item.stable) {
-    return { label: "易失效", cls: "weak" };
+  if (item.stable) {
+    return { label: "精确", cls: "stable" };
   }
-  return { label: "精确", cls: "stable" };
+  if (item.anchored) {
+    return { label: "锚定", cls: "anchored" };
+  }
+  return { label: "易失效", cls: "weak" };
 }
 
 /* ---------- 预览与选取 ---------- */

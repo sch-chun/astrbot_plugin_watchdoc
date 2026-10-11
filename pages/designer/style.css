@@ -524,6 +524,11 @@ ul {
   color: var(--warn);
 }
 
+.tag.anchored {
+  background: rgba(185, 118, 10, 0.16);
+  color: #b9760a;
+}
+
 /* 候选超过前 5 条时折叠，展开更多按钮揭示其余 */
 .candidates:not(.expanded) .cand-extra {
   display: none;
