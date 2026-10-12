@@ -531,7 +531,7 @@ class WatchdocPlugin(Star):
             return NO_RUN_MESSAGE
         doc_data = self._doc_by_ref(run, doc)
         if doc_data is None:
-            return f"未找到指定的文档：{doc}。可用文档：{self._doc_list(run)}"
+            return self._doc_resolution_error(run, doc)
         return summary.read_lines(doc_data, scope, start_line, line_count)
 
     async def _tool_search_document(
@@ -557,7 +557,7 @@ class WatchdocPlugin(Star):
             return NO_RUN_MESSAGE
         doc_data = self._doc_by_ref(run, doc)
         if doc_data is None:
-            return f"未找到指定的文档：{doc}。可用文档：{self._doc_list(run)}"
+            return self._doc_resolution_error(run, doc)
         return summary.search_lines(doc_data, keyword, scope)
 
     def _doc_by_ref(self, run: dict, doc: str) -> dict | None:
@@ -575,7 +575,9 @@ class WatchdocPlugin(Star):
             return None
         ref = str(doc).strip()
         if not ref:
-            return docs[0]
+            # 单文档监控项省略 doc 时默认取唯一一篇；
+            # 多文档监控项必须显式指定，省略则交回 None 由 handler 提示可用列表。
+            return docs[0] if len(docs) == 1 else None
         if ref.startswith("#"):
             try:
                 idx = int(ref[1:]) - 1
@@ -601,6 +603,23 @@ class WatchdocPlugin(Star):
         return "；".join(
             f"#{i + 1} {d.get('name') or d.get('url')}" for i, d in enumerate(docs)
         )
+
+    def _doc_resolution_error(self, run: dict, doc: str) -> str:
+        """文档解析失败时的提示语。
+
+        多文档监控项省略 doc 时，给出「必须指定」的明确指引；
+        其余情况（未匹配到）沿用「未找到」措辞。两者都附可用文档列表。
+
+        Args:
+            run: 本次变更数据，含 docs。
+            doc: 传入的文档引用串。
+
+        Returns:
+            带可用文档列表的提示语。
+        """
+        if not str(doc).strip() and len(run.get("docs") or []) > 1:
+            return f"多文档监控项必须指定 doc 参数。可用文档：{self._doc_list(run)}"
+        return f"未找到指定的文档：{doc}。可用文档：{self._doc_list(run)}"
 
     async def _summarize(
         self, target: dict, changed_docs: list[dict], persona_prompt: str = ""

@@ -250,7 +250,11 @@ def doc_tools(read_handler, search_handler) -> list[FunctionTool]:
     """
     doc_ref = {
         "type": "string",
-        "description": "文档引用：#1 这样的序号，或文档地址子串；省略则取第一篇",
+        "description": (
+            "文档引用：#1/#2 这样的序号，或文档地址子串。"
+            "单文档监控项可省略（默认取唯一一篇）；"
+            "多文档监控项必须指定，省略会返回可用文档列表让你选择。"
+        ),
     }
     scope = {"type": "string", "description": "before 表示变更前，after 表示变更后"}
     return [
@@ -277,7 +281,7 @@ def doc_tools(read_handler, search_handler) -> list[FunctionTool]:
                         ),
                     },
                 },
-                "required": ["doc", "scope"],
+                "required": ["scope"],
             },
             handler=read_handler,
         ),
@@ -294,7 +298,7 @@ def doc_tools(read_handler, search_handler) -> list[FunctionTool]:
                     "doc": doc_ref,
                     "scope": scope,
                 },
-                "required": ["keyword", "doc", "scope"],
+                "required": ["keyword", "scope"],
             },
             handler=search_handler,
         ),

@@ -1687,7 +1687,7 @@ async def test_multi_doc_distinct_targets_summarize_independently(monkeypatch, t
 
 
 async def test_tool_read_document_selects_doc_by_index(monkeypatch, tmp_path):
-    """多文档变更里用 #2 取第二篇，省略则取第一篇。"""
+    """多文档变更里用 #2 取第二篇；省略 doc 必须显式指定而非默认第一篇。"""
     plugin, _ = make_plugin(monkeypatch, tmp_path, {})
     plugin._runs["a:GroupMessage:1"] = {
         "target": MULTI_TARGET,
@@ -1710,8 +1710,21 @@ async def test_tool_read_document_selects_doc_by_index(monkeypatch, tmp_path):
 
     assert "新B" in await plugin._tool_read_document(event, "#2", "after")
     assert "新A" in await plugin._tool_read_document(event, "#1", "after")
-    # 省略 doc 取第一篇
-    assert "新A" in await plugin._tool_read_document(event, scope="after")
+    # 多文档省略 doc 必须指定，返回可用文档列表而非默认第一篇
+    result = await plugin._tool_read_document(event, scope="after")
+    assert "必须指定" in result
+    assert "#1 文档A" in result
+    assert "#2 文档B" in result
+    assert "新A" not in result
+
+
+async def test_tool_read_document_omits_doc_for_single_doc(monkeypatch, tmp_path):
+    """单文档监控项省略 doc 时默认取唯一一篇，无需显式指定。"""
+    plugin, _ = make_plugin(monkeypatch, tmp_path, {})
+    event = set_run(plugin, before="旧内容", after="新内容")
+
+    assert "新内容" in await plugin._tool_read_document(event, scope="after")
+    assert "必须指定" not in await plugin._tool_read_document(event, scope="after")
 
 
 async def test_tool_search_document_selects_doc_by_index(monkeypatch, tmp_path):
