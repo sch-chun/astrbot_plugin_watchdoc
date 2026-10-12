@@ -109,6 +109,21 @@ button.primary {
   white-space: nowrap;
 }
 
+/* 右上角状态按严重程度配色：失败=红、校验警告=琥珀、成功=强调绿，中性保持灰 */
+.status.error {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.status.warn {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+.status.success {
+  color: var(--accent);
+}
+
 .layout {
   flex: 1;
   display: flex;
@@ -399,6 +414,14 @@ html[data-booting] .layout {
   font-weight: 600;
 }
 
+/* 「已添加文档」与表单字段标签（名称 / 推送会话 / 任务指令）同款字体，不抢主标题（h2）的视觉重量 */
+.sub-head {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
 /* 字段名用主色并加粗，说明文字才用次级色且更小：两者同色时几乎分不开 */
 .panel label {
   display: block;
@@ -427,15 +450,6 @@ html[data-booting] .layout {
   display: block;
   width: 100%;
   margin-top: 3px;
-}
-
-/* 地址是只读的：值由抓取或点选已有项决定，不在这里改 */
-.url-line {
-  display: block;
-  margin-top: 3px;
-  color: var(--text);
-  font-weight: 400;
-  word-break: break-all;
 }
 
 .panel label textarea {
@@ -734,7 +748,7 @@ ul {
 /* 已添加文档列表：和候选 / 监控项列表同一套视觉语言 */
 .doc-list {
   list-style: none;
-  margin: 0 0 8px;
+  margin: 0;
   padding: 0;
 }
 
@@ -758,15 +772,19 @@ ul {
   background: var(--accent-soft);
 }
 
+/* 路径过长时由 CSS 在「开头」补省略号（保留末尾更具区分度）：
+   direction:rtl 让 inline 起点在右、溢出裁左侧并补左侧省略号；
+   text-align:left 让短路径仍正常左对齐，不被 rtl 顶到右边 */
 .doc-url {
   flex: 1;
   min-width: 0;
+  direction: rtl;
+  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: ui-monospace, monospace;
   font-size: 11px;
-  word-break: break-all;
 }
 
 .doc-edit,
@@ -779,15 +797,25 @@ ul {
   color: var(--danger);
 }
 
-#add-doc {
+#save-doc {
   width: 100%;
-  margin-bottom: 8px;
-  background: transparent;
-  border: 1px dashed var(--border);
-  color: var(--muted);
+  margin-top: 10px;
 }
 
-#add-doc:hover:not(:disabled) {
-  border-color: var(--accent);
+/* 已添加文档列表下方的「新增文档」入口：虚线描边、强调色文字，呼应“列表 + 加号”的添加习惯；
+   上间距与文档项间距（.doc-item 的 margin-bottom:4px）一致，避免按钮浮得太开 */
+.add-doc-btn {
+  width: 100%;
+  margin: 4px 0 12px;
+  padding: 7px 10px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
   color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.add-doc-btn:hover {
+  border-color: var(--accent);
 }

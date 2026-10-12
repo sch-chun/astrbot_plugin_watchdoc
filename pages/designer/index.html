@@ -49,6 +49,8 @@
               <h2>选择器候选</h2>
               <p id="pick-empty" class="muted">尚未选取任何区域。</p>
               <ul id="candidates" class="candidates"></ul>
+              <p id="f-selector-hint" class="muted small">抓取页面后，这里会显示选择器命中了什么</p>
+              <button id="save-doc" type="button" class="primary" disabled title="先选取一个区域（点选候选）再保存文档">保存文档</button>
             </div>
           </div>
         </div>
@@ -57,12 +59,10 @@
           <div class="collapse-inner">
             <div class="panel" id="form-panel">
               <h2 id="form-title">新建监控项</h2>
-              <label>地址<span id="f-url" class="url-line">—</span></label>
-              <ul id="doc-list" class="doc-list"></ul>
-              <button id="add-doc" type="button">增添文档</button>
               <label>名称<input id="f-name" type="text" placeholder="显示名称" /></label>
-              <label>选择器<input id="f-selector" type="text" placeholder="从候选里挑一个" /></label>
-              <p id="f-selector-hint" class="muted small">抓取页面后，这里会显示选择器命中了什么</p>
+              <h3 class="sub-head">已添加文档</h3>
+              <ul id="doc-list" class="doc-list"></ul>
+              <button id="add-doc" type="button" class="add-doc-btn">+ 新增文档</button>
               <label>推送会话
                 <select id="f-session-select"></select>
               </label>
@@ -77,7 +77,7 @@
               <div class="row">
                 <label class="inline"><input id="f-enabled" type="checkbox" checked />启用</label>
                 <span class="spacer"></span>
-                <button id="save-item" class="primary">保存</button>
+                <button id="save-item" class="primary" disabled>保存</button>
                 <button id="reset-item">清空</button>
               </div>
               <p class="muted small">保存后立即写入插件存储并生效</p>

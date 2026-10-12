@@ -12,8 +12,6 @@ const el = {
   list: document.getElementById("list"),
   formTitle: document.getElementById("form-title"),
   name: document.getElementById("f-name"),
-  furl: document.getElementById("f-url"),
-  selector: document.getElementById("f-selector"),
   selectorHint: document.getElementById("f-selector-hint"),
   matchText: document.getElementById("match-text"),
   matchMeta: document.getElementById("match-meta"),
@@ -32,6 +30,7 @@ const el = {
   save: document.getElementById("save-item"),
   reset: document.getElementById("reset-item"),
   docList: document.getElementById("doc-list"),
+  saveDoc: document.getElementById("save-doc"),
   addDoc: document.getElementById("add-doc"),
   previewLoading: document.getElementById("preview-loading"),
   listSpinner: document.getElementById("list-spinner"),
@@ -68,6 +67,8 @@ let defaultInstruction = "";
 // 当前正在配置的地址：只在抓取成功或点选已有项时更新，
 // 顶部输入框里手打但没抓取的内容不算数
 let currentUrl = "";
+// 当前已选选择器：只在点选候选时更新，不再走手动输入框
+let currentSelector = "";
 
 /* ---------- 列表伸缩动画 ---------- */
 
@@ -315,7 +316,7 @@ function highlightMatches(selector) {
     node.classList.remove("watchdoc-match");
   }
   if (!selector) {
-    el.selectorHint.textContent = "未填选择器，将监控整页";
+    el.selectorHint.textContent = "尚未选择选择器，请点选一个候选区域";
     el.matchMeta.textContent = "";
     el.matchText.textContent = "抓取页面后，这里显示选择器实际会监控到的全文";
     el.matchCollapse.classList.remove("open");
@@ -393,7 +394,9 @@ function onClick(event) {
       meta.textContent = item.count === 1 ? "命中 1" : `共 ${item.count}`;
       li.append(tag, code, meta);
       li.addEventListener("click", () => {
-        el.selector.value = item.selector;
+        currentSelector = item.selector;
+        // 选中区域即解锁「保存文档」：按钮变灰是为了引导先点选一个区域
+        el.saveDoc.disabled = false;
         highlightMatches(item.selector);
         for (const other of el.candidates.children) other.style.borderColor = "";
         li.style.borderColor = "var(--accent)";
@@ -514,7 +517,7 @@ async function loadSessions() {
     allSessions = data.sessions || [];
     renderSessionOptions();
   } catch (error) {
-    setStatus(`会话列表加载失败：${error.message}`);
+    setStatus(`会话列表加载失败：${error.message}`, "error");
   }
 }
 
@@ -576,11 +579,10 @@ function renderList() {
       const pushCount = (item.sessions || []).length;
       sel.textContent = `${docCount} 篇文档 · 推送 ${pushCount} 个会话`;
 
-      li.addEventListener("click", async () => {
+      li.addEventListener("click", () => {
+        // 选中监控项只填表单与文档列表，不自动抓取；
+        // 抓取留给点具体的文档行（进入编辑）时按需触发
         fillForm(item);
-        // 选中即重新抓取，便于直接对照页面调整选择器
-        const firstDoc = (item.documents && item.documents[0]) || (item.url ? { url: item.url } : null);
-        if (firstDoc) await doFetch(firstDoc.url);
       });
       li.append(top, sel);
       el.list.appendChild(li);
@@ -604,7 +606,7 @@ function fillForm(item) {
   if (!currentDocs.length && item.url) {
     currentDocs = [{ url: item.url, selector: item.selector || "" }];
   }
-  editingDocIndex = currentDocs.length ? 0 : null;
+  editingDocIndex = null; // 选中监控项不默认进入任何文档的编辑态，高亮留给点具体文档行时再出现
   el.name.value = item.name || "";
   el.instruction.value = item.instruction || defaultInstruction;
   el.enabled.checked = item.enabled !== false;
@@ -612,7 +614,13 @@ function fillForm(item) {
   renderSessionChips();
   setFormMode(item.name || item.id || "");
   renderSessionOptions(); // 切换编辑项时，置顶集合随「当前项」变化
-  loadDraftDoc(); // 把第一篇（或空草稿）填进表单字段并抓取预览
+  renderDocList(); // 仅渲染文档列表（不默认高亮任何项），不自动抓取预览
+  // 选中监控项即展开表单面板（不再依赖自动抓取触发 showForm）；
+  // 预览/候选/命中面板保持未加载态，避免展示上一次抓取的残留内容误导
+  el.preview.innerHTML = "";
+  el.pickCollapse.classList.remove("open");
+  el.matchCollapse.classList.remove("open");
+  showForm();
   renderList();
 }
 
@@ -643,7 +651,7 @@ function resetPage() {
   el.url.value = "";
   el.pick.disabled = true;
   el.pick.textContent = "选取区域";
-  el.status.textContent = "";
+  setStatus("");
   el.hint.textContent = INITIAL.hint;
   el.pickEmpty.style.display = "";
   el.candidates.innerHTML = "";
@@ -656,8 +664,8 @@ function resetPage() {
   el.name.value = "";
   // 地址也一起清掉：没有正在配置的页面时保存会被拦住，
   // 不会留下「同地址、空选择器」的重复条目
-  el.furl.textContent = "—";
-  el.selector.value = "";
+  currentSelector = "";
+  el.saveDoc.disabled = true; // 回到初始态：没有选中区域，按钮变灰
   // 启动时这里 defaultInstruction 还是空的（要等一次接口往返），但表单面板此刻
   // 是隐藏的，露出之前 showForm() 会补上，用户看不到中间的空框
   el.instruction.value = defaultInstruction;
@@ -674,11 +682,12 @@ function resetPage() {
 function commitDraft() {
   const url = el.url.value.trim();
   if (!url) return;
-  const selector = el.selector.value.trim();
+  const selector = currentSelector.trim();
   const entry = { url, selector };
   if (editingDocIndex !== null && currentDocs[editingDocIndex]) {
     currentDocs[editingDocIndex] = entry;
-  } else if (!currentDocs.some((d) => d.url === url)) {
+  } else if (selector && !currentDocs.some((d) => d.url === url)) {
+    // 选择器为必填：未点选候选的新文档不入列表，避免留下空选择器条目
     currentDocs.push(entry);
   }
   renderDocList();
@@ -689,9 +698,10 @@ function loadDraftDoc() {
   const doc = editingDocIndex !== null ? currentDocs[editingDocIndex] : null;
   const url = doc ? doc.url : "";
   el.url.value = url;
-  el.selector.value = doc ? doc.selector : "";
+  currentSelector = doc ? doc.selector : "";
+  // 编辑已经有选择器的旧文档时保持按钮可用；空草稿（新增首篇）则变灰，引导先点选
+  el.saveDoc.disabled = !doc || !doc.selector;
   currentUrl = url;
-  el.furl.textContent = url || "—";
   if (url) {
     doFetch(url);
   } else {
@@ -701,8 +711,73 @@ function loadDraftDoc() {
   renderDocList();
 }
 
+// 「新增文档」按钮：进入新增草稿态，清掉当前正在配置的地址 / 预览 / 候选 / 已选选择器，
+// 聚焦顶部地址输入，让用户直接输入新网址抓取。只动文档草稿，不动名称、推送会话等表单其余字段
+function startNewDoc() {
+  editingDocIndex = null;
+  currentUrl = "";
+  currentSelector = "";
+  el.saveDoc.disabled = true; // 未选区域前按钮保持灰
+  el.url.value = "";
+  el.preview.innerHTML = "";
+  animateList(el.candidates, () => {
+    el.candidates.innerHTML = "";
+  });
+  el.pickEmpty.style.display = "";
+  el.hint.textContent = INITIAL.hint;
+  el.selectorHint.textContent = INITIAL.selectorHint;
+  el.pickCollapse.classList.remove("open");
+  el.matchCollapse.classList.remove("open");
+  el.url.focus();
+  // 进入新增草稿态后重渲染文档列表，清掉刚才正在编辑条目的高亮
+  renderDocList();
+  setStatus("输入新文档地址并抓取，然后点选区域");
+}
+
+// 从「选择器候选」面板保存当前文档：把正在配置的地址 + 已选选择器并入子列表，
+// 然后清空地址栏 / 预览 / 候选，回到「新增」草稿态，方便连续添加多篇
+function saveCurrentDoc() {
+  const url = currentUrl.trim();
+  if (!url) return setStatus("先抓取并（可选）选取区域，再保存文档", "warn");
+  const entry = { url, selector: currentSelector.trim() };
+  if (editingDocIndex !== null && currentDocs[editingDocIndex]) {
+    currentDocs[editingDocIndex] = entry;
+  } else if (!currentDocs.some((d) => d.url === url)) {
+    currentDocs.push(entry);
+  }
+  // 保存即退出编辑态：先把高亮索引清空再渲染，避免刚存好的条目还顶着「正在编辑」高亮
+  editingDocIndex = null;
+  renderDocList();
+  // 清空：地址栏、预览、选择器候选、当前选择，回到「新增」草稿态
+  el.url.value = "";
+  currentUrl = "";
+  currentSelector = "";
+  el.saveDoc.disabled = true; // 已无选中区域，按钮重新变灰，引导先点选
+  el.preview.innerHTML = "";
+  animateList(el.candidates, () => {
+    el.candidates.innerHTML = "";
+  });
+  el.pickEmpty.style.display = "";
+  el.hint.textContent = INITIAL.hint;
+  el.selectorHint.textContent = INITIAL.selectorHint;
+  el.pickCollapse.classList.remove("open");
+  // 保存文档后命中内容面板一并收起：刚存完当前区域，下一轮才是新文档的命中
+  el.matchCollapse.classList.remove("open");
+  setStatus("文档已保存", "success");
+}
+
 // 渲染「已添加文档」列表，支持编辑 / 移除
+// 只剥冗余的 http(s):// 协议头、保留域名，短网址也能一眼看出来自哪个站；
+// 路径过长时由 .doc-url 的 CSS 在开头加省略号（保留末尾更具区分度）
+function shortUrl(url) {
+  if (!url) return "—";
+  return url.replace(/^https?:\/\//i, "") || url;
+}
+
 function renderDocList() {
+  // 没有已添加文档时，保存监控项按钮一并变灰（与「保存文档需先选区域」同源引导）；
+  // 必须放在空列表提前 return 之前，否则删掉唯一文档后按钮状态不刷新
+  el.save.disabled = currentDocs.length === 0;
   el.docList.innerHTML = "";
   if (!currentDocs.length) {
     const empty = document.createElement("li");
@@ -714,15 +789,15 @@ function renderDocList() {
   currentDocs.forEach((doc, idx) => {
     const li = document.createElement("li");
     li.className = "doc-item" + (idx === editingDocIndex ? " current" : "");
+    // 序号单独成 span（非 rtl），避免路径溢出时把序号也裁掉
+    const idxLabel = document.createElement("span");
+    idxLabel.className = "doc-index";
+    idxLabel.textContent = `${idx + 1}.`;
     const label = document.createElement("span");
     label.className = "doc-url";
-    label.textContent = `${idx + 1}. ${doc.url}`;
-    const edit = document.createElement("button");
-    edit.className = "doc-edit";
-    edit.type = "button";
-    edit.textContent = "编辑";
-    edit.addEventListener("click", (e) => {
-      e.stopPropagation();
+    label.textContent = shortUrl(doc.url);
+    // 点整行即进入该文档的编辑（抓取预览 + 填候选），不再单列「编辑」按钮
+    li.addEventListener("click", () => {
       editingDocIndex = idx;
       loadDraftDoc();
     });
@@ -732,15 +807,46 @@ function renderDocList() {
     del.textContent = "移除";
     del.addEventListener("click", (e) => {
       e.stopPropagation();
+      removeDoc(idx, li);
+    });
+    li.appendChild(idxLabel);
+    li.appendChild(label);
+    li.appendChild(del);
+    el.docList.appendChild(li);
+  });
+}
+
+// 移除一篇文档：先弹确认框（与监控项删除同一套模态），确认后再把该行收缩到 0 高度、
+// 淡出，动画结束才真正从 currentDocs 删除并重渲染，避免「啪」一下硬消失
+function removeDoc(idx, li) {
+  const url = currentDocs[idx] ? currentDocs[idx].url : "";
+  openConfirm(`确认移除文档「${shortUrl(url)}」？`, () => {
+    const finish = () => {
       currentDocs.splice(idx, 1);
       if (editingDocIndex === idx) editingDocIndex = null;
       else if (editingDocIndex > idx) editingDocIndex--;
       loadDraftDoc();
+    };
+    if (!li) return finish();
+    const h = li.getBoundingClientRect().height;
+    li.style.transition = "none";
+    li.style.height = `${h}px`;
+    li.style.overflow = "hidden";
+    requestAnimationFrame(() => {
+      li.style.transition =
+        "height 0.2s ease, opacity 0.2s ease, margin 0.2s ease, padding 0.2s ease";
+      li.style.height = "0";
+      li.style.opacity = "0";
+      li.style.marginTop = "0";
+      li.style.marginBottom = "0";
+      li.style.paddingTop = "0";
+      li.style.paddingBottom = "0";
+      const done = () => {
+        li.removeEventListener("transitionend", done);
+        finish();
+      };
+      li.addEventListener("transitionend", done);
     });
-    li.appendChild(label);
-    li.appendChild(edit);
-    li.appendChild(del);
-    el.docList.appendChild(li);
   });
 }
 
@@ -774,14 +880,17 @@ async function persist() {
   try {
     await bridge.apiPost("targets", { targets });
     renderList();
-    setStatus(`已保存 ${targets.length} 个监控项`);
+    setStatus("配置已保存", "success");
   } catch (error) {
-    setStatus(`保存失败：${error.message}`);
+    setStatus(`保存失败：${error.message}`, "error");
   }
 }
 
-function setStatus(text) {
+function setStatus(text, type) {
   el.status.textContent = text;
+  // type: "error" | "warn" | "success"（省略则为中性灰）；失败与校验不通过用提醒色，
+  // 让右上角状态一眼可辨，不必到表单里找问题
+  el.status.className = type ? `status ${type}` : "status";
 }
 
 // 删除确认模态框：页面内自建 UI，不依赖原生 confirm（沙箱 iframe 无 allow-modals，会被拦截）。
@@ -856,7 +965,7 @@ function withTimeout(promise, ms) {
 }
 
 async function doFetch(url) {
-  if (!url) return setStatus("请先填写网址");
+  if (!url) return setStatus("请先填写网址", "warn");
   setStatus("抓取中…");
   setPreviewLoading(true);
   // 渲染期间先把预览隐掉：大文档同步建 shadow DOM 会整块重绘，直接显示会闪一下
@@ -872,15 +981,19 @@ async function doFetch(url) {
     });
     el.pickEmpty.style.display = "";
     el.hint.textContent = INITIAL.hint;
-    highlightMatches(el.selector.value.trim());
+    highlightMatches(currentSelector.trim());
     el.url.value = url;
     currentUrl = url;
-    el.furl.textContent = url;
+    // 抓取了与「正在编辑的文档」不同的网址，说明要新增一篇而非覆盖原文档：
+    // 退出编辑态，saveCurrentDoc 才会走追加分支，否则编辑监控项时无法新增文档
+    if (editingDocIndex !== null && currentDocs[editingDocIndex] && currentDocs[editingDocIndex].url !== url) {
+      editingDocIndex = null;
+    }
     // 没抓到页面就无从选区域、也无从判断监控什么，这两块先不露出来
     el.pickCollapse.classList.add("open");
     showForm();
     if (!data.textLength || data.textLength < 500) {
-      setStatus("抓到的正文很少，该页面可能需要 JS 渲染，无法可视化选取");
+      setStatus("抓到的正文很少，该页面可能需要 JS 渲染，无法可视化选取", "warn");
     } else {
       setStatus(`已加载（正文 ${data.textLength} 字符）`);
     }
@@ -896,26 +1009,14 @@ async function doFetch(url) {
   } catch (error) {
     setPreviewLoading(false);
     el.preview.style.opacity = "1";
-    setStatus(`抓取失败：${error.message}`);
+    setStatus(`抓取失败：${error.message}`, "error");
   }
 }
 
 el.fetch.addEventListener("click", () => doFetch(el.url.value.trim()));
 
-el.addDoc.addEventListener("click", () => {
-  commitDraft(); // 先把当前草稿并入列表
-  editingDocIndex = null; // 进入「新增」草稿态
-  // 清空地址栏、选择器、文档预览，允许再输入一篇并抓取（用户原话）
-  el.url.value = "";
-  el.selector.value = "";
-  currentUrl = "";
-  el.furl.textContent = "—";
-  el.preview.innerHTML = "";
-  el.pickCollapse.classList.remove("open");
-  el.hint.textContent = INITIAL.hint;
-  renderDocList();
-  setStatus("已添加上篇文档，继续输入下一篇地址并抓取");
-});
+el.saveDoc.addEventListener("click", saveCurrentDoc);
+el.addDoc.addEventListener("click", startNewDoc);
 
 el.pick.addEventListener("click", () => {
   selecting = !selecting;
@@ -925,14 +1026,23 @@ el.pick.addEventListener("click", () => {
 
 el.save.addEventListener("click", async () => {
   commitDraft();
-  if (!currentDocs.length) return setStatus("请先抓取至少一个文档");
+  if (!currentDocs.length) return setStatus("请先抓取至少一个文档", "warn");
+  // 选择器为必填：任一篇没选区域就拦下，确保落盘的每条文档都有明确监控范围
+  if (currentDocs.some((d) => !d.selector)) {
+    return setStatus("每篇文档都必须选择一个选择器：点选候选后点「保存文档」", "warn");
+  }
+  const name = el.name.value.trim();
   // 编辑已有项时沿用原标识：换了网址也还是同一条记录，否则会分裂成两条；
   // 标识只在新建时按首篇文档地址推导一次，之后经 editingId 保留，避免增删文档导致快照孤儿
   const firstUrl = currentDocs[0].url;
   const id = editingId || nextId(firstUrl);
+  // 重名检测：非空名称不能与其它监控项重复（按 id 排除自身改名），避免列表里出现两个同名项分不清
+  if (name && targets.some((t) => t.id !== id && (t.name || "") === name)) {
+    return setStatus(`名称「${name}」已存在，请换一个`, "warn");
+  }
   const record = {
     id,
-    name: el.name.value.trim() || id,
+    name: name || id,
     documents: currentDocs.map((d) => ({ url: d.url, selector: d.selector })),
     instruction: el.instruction.value.trim(),
     enabled: el.enabled.checked,
@@ -948,12 +1058,7 @@ el.save.addEventListener("click", async () => {
   await persist();
 });
 
-let selectorTimer = null;
-el.selector.addEventListener("input", () => {
-  clearTimeout(selectorTimer);
-  // 边打边算太跳，停手 400ms 再高亮
-  selectorTimer = setTimeout(() => highlightMatches(el.selector.value.trim()), 400);
-});
+// 选择器不再走手动输入框：仅通过点选候选设置 currentSelector
 
 el.sessionSelect.addEventListener("change", () => {
   addSession(el.sessionSelect.value);
@@ -1036,7 +1141,7 @@ async function loadTargets() {
     renderSessionOptions();
   } catch (error) {
     listFailed = true;
-    setStatus(`监控项加载失败：${error.message}`);
+    setStatus(`监控项加载失败：${error.message}`, "error");
   }
   listLoaded = true;
   el.listSpinner.remove();
@@ -1052,7 +1157,7 @@ let bootTimedOut = false;
 const bootTimer = setTimeout(() => {
   bootTimedOut = true;
   document.documentElement.removeAttribute("data-booting");
-  setStatus("初始化超时：插件接口没有响应，请刷新页面重试");
+  setStatus("初始化超时：插件接口没有响应，请刷新页面重试", "error");
 }, BOOT_TIMEOUT_MS);
 
 try {
@@ -1066,5 +1171,5 @@ try {
 } catch (error) {
   clearTimeout(bootTimer);
   document.documentElement.removeAttribute("data-booting");
-  if (!bootTimedOut) setStatus(`初始化失败：${error.message}`);
+  if (!bootTimedOut) setStatus(`初始化失败：${error.message}`, "error");
 }
