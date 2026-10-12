@@ -6,7 +6,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.24.0-blueviolet)](https://github.com/AstrBotDevs/AstrBot)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v0.1.5-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.1.6-green)](CHANGELOG.md)
 
 ---
 
@@ -65,12 +65,15 @@ https://github.com/sch-chun/astrbot_plugin_watchdoc
 插件详情页 → **Watchdoc 配置**：
 
 1. 顶部填入文档地址，点「抓取」；
-2. 点「选取区域」，在预览里点选要监控的正文块 —— 右栏会给出可直接抄用的选择器候选，语义化稳定的排前面，构建产物型的类名标注为「易失效」；
-3. 在右栏填名称、选择器、推送会话、任务指令，点「保存」。
+2. 点「选取区域」，在预览里点选要监控的正文块 —— 右栏「选择器候选」会给出可直接抄用的候选（语义化稳定的排前面，构建产物型的类名标注为「易失效」）；点一个候选即把它和当前地址作为一篇文档，点「保存文档」加进「已添加文档」列表；
+3. 一篇还不够，点列表下方的「+ 新增文档」再抓一篇，重复第 2 步；每篇文档都必须点选一个选择器，否则「保存文档」保持置灰；
+4. 在右栏填名称、推送会话、任务指令，点「保存监控项」。
 
 保存即写入插件存储并生效。也可以在命令行用 `/watchdoc probe <url>` 拿到候选清单。
 
-选择器命中内容时，预览下方会弹出「选择器命中内容」底栏，显示该选择器实际会监控到的全文；拖拽其顶栏可调整高度。删除监控项会先弹确认框，避免误删。
+一个监控项就是一组文档：组内所有文档共享同一组推送会话，逐文档独立比对基线，仅真正变化的文档进入总结。「已添加文档」里**点某一行**即进入该文档的编辑（抓取预览 + 重新点选区域），点「移除」会先弹确认框、并带收缩动画；编辑监控项时选中即展开表单、但**不自动抓取**，需点具体文档行才抓取。名称不可与已有监控项重名（保存时会拦截）。删除监控项同样先弹确认框，避免误删。
+
+选择器命中内容时，预览下方会弹出「选择器命中内容」底栏，显示该选择器实际会监控到的全文；拖拽其顶栏可调整高度。保存 / 抓取的结果显示在右上角状态栏：失败为红、校验警告为琥珀、成功为绿，中性提示保持灰。
 
 推送会话从 AstrBot 已知的会话里选，也可以手动填 UMO（形如 `aiocqhttp:GroupMessage:123456`）。可以填多个；留空则检测到变更只落盘、不推送。
 
@@ -113,7 +116,7 @@ https://github.com/sch-chun/astrbot_plugin_watchdoc
 | 数据 | 位置 |
 | --- | --- |
 | 监控项配置 | 插件 KV 存储（按插件隔离，由 AstrBot 管理） |
-| 基线快照 | `data/plugin_data/astrbot_plugin_watchdoc/snapshots/` |
+| 基线快照 | `data/plugin_data/astrbot_plugin_watchdoc/snapshots/<id>/`（多文档监控项按文档分组） |
 | 变更存档 | `data/plugin_data/astrbot_plugin_watchdoc/history/<id>/` |
 
 每个监控项的存档最多保留 50 份，超出删最旧的——选择器失效时可能每次都判定为变更，这是防无限增长的兜底。
@@ -132,7 +135,7 @@ https://github.com/sch-chun/astrbot_plugin_watchdoc
 ## 开发
 
 ```bash
-pytest -q            # 93 条用例，全部离线，不依赖网络
+pytest -q            # 101 条用例，全部离线，不依赖网络
 ruff format . && ruff check .
 ```
 
