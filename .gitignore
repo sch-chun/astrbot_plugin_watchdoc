@@ -5,6 +5,10 @@ __pycache__/
 
 # Testing
 .pytest_cache/
+.pytest-tmp/
+.pytest-clean/
+.pytest-clean2/
+pytest_out.log
 .coverage
 htmlcov/
 

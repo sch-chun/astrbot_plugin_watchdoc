@@ -150,60 +150,121 @@ class WatchdocPlugin(Star):
         """
         await self.put_kv_data(TARGETS_KEY, targets)
 
-    async def _check_one(self, target: dict) -> None:
-        """检查单个监控项，发现变化时总结并推送。
+    def _docs_of(self, target: dict) -> list[dict]:
+        """取监控项要检测的文档列表，兼容旧版单 url 配置。
+
+        新结构下文档写在 documents 字段；旧版只有顶层 url/selector 时
+        在此兜底成单文档列表，保证已部署的监控项在用户于面板重存前仍能运行。
 
         Args:
-            target: 监控项配置，至少包含 id 与 url。
+            target: 监控项配置。
+
+        Returns:
+            文档字典列表，每项至少含 url。
         """
-        tid = str(target.get("id") or target.get("url") or "")
-        url = str(target.get("url") or "")
-        if not url:
-            logger.warning(f"[watchdoc] 监控项 {tid} 缺少 url，跳过")
+        docs = target.get("documents")
+        if isinstance(docs, list) and docs:
+            return [d for d in docs if isinstance(d, dict)]
+        url = str(target.get("url") or "").strip()
+        if url:
+            # 迁移兜底：旧单文档项仍能检测，待用户在面板重存即转为 documents
+            return [{"url": url, "selector": str(target.get("selector") or "")}]
+        return []
+
+    async def _check_one(self, target: dict) -> None:
+        """检查单个监控项，发现变化时把变化的文档一起总结并推送。
+
+        监控项可持有多个文档（documents）。每次检测逐文档比对快照，
+        仅真正变化的文档进入总结；同一次检测里变化的文档会被合并成一份总结。
+
+        Args:
+            target: 监控项配置，至少包含 id 与 documents（兼容旧版单 url）。
+        """
+        tid = str(target.get("id") or target.get("name") or "")
+        docs = self._docs_of(target)
+        if not docs:
+            logger.warning(f"[watchdoc] 监控项 {tid} 没有可监控的文档，跳过")
             return
 
-        html = await self._fetch(url)
-        # bs4 与 markitdown 都是同步阻塞的，放进线程避免卡住事件循环。
-        # 归一化同理：ignore_patterns 是用户填的正则，长文本上灾难性回溯会
-        # 把整个 bot 的事件循环拖死，而这行跑的是无人值守的定时任务。
-        current = await asyncio.to_thread(
-            self._to_markdown, html, str(target.get("selector") or ""), tid
-        )
-        current = await asyncio.to_thread(self._normalize, current, target)
-        if not current.strip():
-            logger.warning(f"[watchdoc] {tid} 抓取内容为空，页面可能需要 JS 渲染")
-            return
+        doc_dir = self.snapshot_dir / safe_name(tid)
+        changed: list[dict] = []
+        for doc in docs:
+            url = str(doc.get("url") or "").strip()
+            if not url:
+                continue
+            slug = safe_name(url)
+            html = await self._fetch(url)
+            # bs4 与 markitdown 都是同步阻塞的，放进线程避免卡住事件循环。
+            # 归一化同理：ignore_patterns 是用户填的正则，长文本上灾难性回溯会
+            # 把整个 bot 的事件循环拖死，而这行跑的是无人值守的定时任务。
+            current = await asyncio.to_thread(
+                self._to_markdown, html, str(doc.get("selector") or ""), tid
+            )
+            current = await asyncio.to_thread(self._normalize, current, target)
+            if not current.strip():
+                logger.warning(f"[watchdoc] {tid}/{slug} 抓取内容为空，页面可能需要 JS 渲染")
+                continue
 
-        snap_path = self.snapshot_dir / f"{safe_name(tid)}.md"
-        previous = snap_path.read_text(encoding="utf-8") if snap_path.exists() else None
+            new_path = doc_dir / f"{slug}.md"
+            previous = new_path.read_text(encoding="utf-8") if new_path.exists() else None
+            if previous is None and len(docs) == 1:
+                # 迁移兜底：旧单文档基线在 snapshots/{tid}.md，一次性搬进分组目录
+                legacy = self.snapshot_dir / f"{safe_name(tid)}.md"
+                if legacy.exists():
+                    previous = legacy.read_text(encoding="utf-8")
+                    doc_dir.mkdir(parents=True, exist_ok=True)
+                    new_path.write_text(previous, encoding="utf-8")
+                    legacy.unlink(missing_ok=True)
 
-        if previous is None:
-            snap_path.write_text(current, encoding="utf-8")
-            logger.info(f"[watchdoc] {tid} 已建立初始基线（{len(current)} 字符）")
-            return
+            if previous is None:
+                doc_dir.mkdir(parents=True, exist_ok=True)
+                new_path.write_text(current, encoding="utf-8")
+                logger.info(f"[watchdoc] {tid}/{slug} 已建立初始基线（{len(current)} 字符）")
+                continue
 
-        if digest(current) == digest(previous):
+            if digest(current) == digest(previous):
+                logger.debug(f"[watchdoc] {tid}/{slug} 无变化")
+                continue
+
+            diff = make_diff(previous, current)
+            if not diff.strip():
+                # 归一化之后没有差异，说明只是空白之类的无意义变动
+                new_path.write_text(current, encoding="utf-8")
+                logger.info(f"[watchdoc] {tid}/{slug} 仅有无意义变动，已更新快照")
+                continue
+
+            # 更新该文档快照（未变化的文档保持原基线，不反复写）
+            doc_dir.mkdir(parents=True, exist_ok=True)
+            new_path.write_text(current, encoding="utf-8")
+            changed.append(
+                {
+                    "url": url,
+                    "selector": str(doc.get("selector") or ""),
+                    "name": str(doc.get("name") or doc.get("url") or ""),
+                    "before": previous,
+                    "after": current,
+                    "diff": diff,
+                }
+            )
+
+        if not changed:
             logger.debug(f"[watchdoc] {tid} 无变化")
             return
 
-        diff = make_diff(previous, current)
-        if not diff.strip():
-            # 归一化之后没有差异，说明只是空白之类的无意义变动
-            snap_path.write_text(current, encoding="utf-8")
-            logger.info(f"[watchdoc] {tid} 仅有无意义变动，已更新快照")
-            return
-
-        # 人格不同的会话各生成一份总结，人格相同的共用一份
-        change = {"before": previous, "after": current, "diff": diff}
+        # 人格不同的会话各生成一份总结，人格相同的共用一份；
+        # 同一次检测里变化的文档合并进同一份总结
+        change = {"docs": changed}
         deliveries = []
         for group in await self._group_sessions_by_persona(target):
             summary_text = await self._make_summary(target, change, group)
             deliveries.append((summary_text, group["umos"]))
 
-        snap_path.write_text(current, encoding="utf-8")
-        self._archive(target, diff, deliveries)
+        self._archive(target, change, deliveries)
         await self._notify(target, deliveries)
-        logger.info(f"[watchdoc] {tid} 检测到变更并已推送（{len(deliveries)} 份总结）")
+        logger.info(
+            f"[watchdoc] {tid} 检测到 {len(changed)} 篇文档变更并已推送"
+            f"（{len(deliveries)} 份总结）"
+        )
 
     async def _fetch(self, url: str) -> str:
         """抓取页面 HTML。
@@ -278,8 +339,28 @@ class WatchdocPlugin(Star):
 
         cleaned = []
         for item in targets:
-            if not isinstance(item, dict) or not str(item.get("url") or ""):
-                return error_response("每个监控项都必须是对象且带 url", status_code=400)
+            if not isinstance(item, dict):
+                return error_response("每个监控项都必须是对象", status_code=400)
+            docs = item.get("documents")
+            if not isinstance(docs, list) or not docs:
+                # 要求迁移：旧版单 url 项需先在面板重存为 documents 结构
+                return error_response(
+                    "每个监控项都必须含 documents 数组", status_code=400
+                )
+            norm_docs = []
+            for d in docs:
+                if not isinstance(d, dict) or not str(d.get("url") or "").strip():
+                    return error_response(
+                        "documents 每项都必须是含 url 的对象", status_code=400
+                    )
+                norm_docs.append(
+                    {
+                        "url": str(d["url"]).strip(),
+                        "selector": str(d.get("selector") or ""),
+                        "name": str(d.get("name") or "").strip(),
+                    }
+                )
+            item["documents"] = norm_docs
             cleaned.append(item)
         previous = await self._load_targets()
         await self._save_targets(cleaned)
@@ -371,7 +452,7 @@ class WatchdocPlugin(Star):
             except Exception as exc:  # noqa: BLE001
                 # agent 跑挂不能吞掉这次变更，退回单次调用保证仍有总结
                 logger.error(f"[watchdoc] agent 总结失败，退回单次调用: {exc}")
-        return await self._summarize(target, change["diff"], group["prompt"])
+        return await self._summarize(target, change["docs"], group["prompt"])
 
     async def _summarize_with_agent(
         self, target: dict, change: dict, group: dict
@@ -392,12 +473,12 @@ class WatchdocPlugin(Star):
             provider_id = self._default_provider_id()
         max_steps = int(self.config.get("agent_max_steps") or DEFAULT_AGENT_STEPS)
 
-        self._runs[umo] = {"target": target, **change}
+        self._runs[umo] = {"target": target, "docs": change["docs"]}
         try:
             return await summary.summarize_with_agent(
                 self.context,
                 target,
-                change,
+                change["docs"],
                 group,
                 provider_id,
                 self._build_tool_set(group["tools"]),
@@ -428,14 +509,16 @@ class WatchdocPlugin(Star):
     async def _tool_read_document(
         self,
         event: AstrMessageEvent,
-        scope: str,
+        doc: str = "",
+        scope: str = "after",
         start_line: int = 1,
         line_count: int = TOOL_READ_DEFAULT_LINES,
     ) -> str:
-        """按行号区间读取本次变更的原文。
+        """按行号区间读取某篇变化文档的原文。
 
         Args:
             event: 触发工具的事件，用来定位本次变更。
+            doc: 文档引用，#1 这样的序号或文档地址子串。
             scope: before 或 after。
             start_line: 起始行号。
             line_count: 读取行数。
@@ -446,16 +529,24 @@ class WatchdocPlugin(Star):
         run = self._runs.get(event.unified_msg_origin)
         if run is None:
             return NO_RUN_MESSAGE
-        return summary.read_lines(run, scope, start_line, line_count)
+        doc_data = self._doc_by_ref(run, doc)
+        if doc_data is None:
+            return self._doc_resolution_error(run, doc)
+        return summary.read_lines(doc_data, scope, start_line, line_count)
 
     async def _tool_search_document(
-        self, event: AstrMessageEvent, keyword: str, scope: str
+        self,
+        event: AstrMessageEvent,
+        keyword: str,
+        doc: str = "",
+        scope: str = "after",
     ) -> str:
-        """在原文中搜索关键词。
+        """在某篇变化文档的原文中搜索关键词。
 
         Args:
             event: 触发工具的事件，用来定位本次变更。
             keyword: 搜索关键词。
+            doc: 文档引用，#1 这样的序号或文档地址子串。
             scope: before 或 after。
 
         Returns:
@@ -464,23 +555,87 @@ class WatchdocPlugin(Star):
         run = self._runs.get(event.unified_msg_origin)
         if run is None:
             return NO_RUN_MESSAGE
-        return summary.search_lines(run, keyword, scope)
+        doc_data = self._doc_by_ref(run, doc)
+        if doc_data is None:
+            return self._doc_resolution_error(run, doc)
+        return summary.search_lines(doc_data, keyword, scope)
+
+    def _doc_by_ref(self, run: dict, doc: str) -> dict | None:
+        """按序号（#1）或地址子串从本次变更里取一篇文档。
+
+        Args:
+            run: 本次变更数据，含 docs。
+            doc: 文档引用串。
+
+        Returns:
+            命中的文档字典；未命中返回 None。
+        """
+        docs = run.get("docs") or []
+        if not docs:
+            return None
+        ref = str(doc).strip()
+        if not ref:
+            # 单文档监控项省略 doc 时默认取唯一一篇；
+            # 多文档监控项必须显式指定，省略则交回 None 由 handler 提示可用列表。
+            return docs[0] if len(docs) == 1 else None
+        if ref.startswith("#"):
+            try:
+                idx = int(ref[1:]) - 1
+                if 0 <= idx < len(docs):
+                    return docs[idx]
+            except ValueError:
+                pass
+        for d in docs:
+            if ref in str(d.get("url") or ""):
+                return d
+        return None
+
+    def _doc_list(self, run: dict) -> str:
+        """列出本次变更可用文档，供工具报错时提示。
+
+        Args:
+            run: 本次变更数据，含 docs。
+
+        Returns:
+            文档序号与名称的可读串。
+        """
+        docs = run.get("docs") or []
+        return "；".join(
+            f"#{i + 1} {d.get('name') or d.get('url')}" for i, d in enumerate(docs)
+        )
+
+    def _doc_resolution_error(self, run: dict, doc: str) -> str:
+        """文档解析失败时的提示语。
+
+        多文档监控项省略 doc 时，给出「必须指定」的明确指引；
+        其余情况（未匹配到）沿用「未找到」措辞。两者都附可用文档列表。
+
+        Args:
+            run: 本次变更数据，含 docs。
+            doc: 传入的文档引用串。
+
+        Returns:
+            带可用文档列表的提示语。
+        """
+        if not str(doc).strip() and len(run.get("docs") or []) > 1:
+            return f"多文档监控项必须指定 doc 参数。可用文档：{self._doc_list(run)}"
+        return f"未找到指定的文档：{doc}。可用文档：{self._doc_list(run)}"
 
     async def _summarize(
-        self, target: dict, diff: str, persona_prompt: str = ""
+        self, target: dict, changed_docs: list[dict], persona_prompt: str = ""
     ) -> str:
-        """调用 LLM 总结 diff。
+        """调用 LLM 总结若干变化文档。
 
         Args:
             target: 监控项配置。
-            diff: unified diff 文本。
+            changed_docs: 本次变化的文档列表，每项含 name/url/diff。
             persona_prompt: 会话人格的 system prompt。
 
         Returns:
             总结文本。
         """
         return await summary.summarize(
-            self._get_provider(), target, diff, persona_prompt
+            self._get_provider(), target, changed_docs, persona_prompt
         )
 
     def _get_provider(self):
@@ -545,12 +700,16 @@ class WatchdocPlugin(Star):
             deliveries: (总结, 会话列表) 的列表。
         """
         title = target.get("name") or target.get("id")
+        # 列出本次监控的文档地址；兼容旧版单 url
+        doc_lines = "\n".join(
+            f"- {d.get('url')}" for d in (target.get("documents") or [])
+        ) or target.get("url") or ""
         pushed = False
         for summary_text, umos in deliveries:
             if not umos:
                 continue
             pushed = True
-            text = f"[文档变更] {title}\n{target.get('url')}\n\n{summary_text}"
+            text = f"[文档变更] {title}\n{doc_lines}\n\n{summary_text}"
             for umo in umos:
                 try:
                     await self.context.send_message(umo, MessageChain([Plain(text)]))
@@ -560,7 +719,7 @@ class WatchdocPlugin(Star):
                     continue
                 try:
                     await self._append_history(
-                        umo, str(title), str(target.get("url") or ""), text
+                        umo, str(title), doc_lines, text
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error(f"[watchdoc] 追加 {umo} 会话历史失败: {exc}")
@@ -580,16 +739,16 @@ class WatchdocPlugin(Star):
         await storage.append_to_history(self.context, umo, title, url, text)
 
     def _archive(
-        self, target: dict, diff: str, deliveries: list[tuple[str, list[str]]]
+        self, target: dict, change: dict, deliveries: list[tuple[str, list[str]]]
     ) -> None:
         """把本次变更存档到插件数据目录。
 
         Args:
             target: 监控项配置。
-            diff: unified diff 文本。
+            change: 含 docs 的变更数据。
             deliveries: (总结, 会话列表) 的列表。
         """
-        storage.archive(self.history_dir, target, diff, deliveries)
+        storage.archive(self.history_dir, target, change, deliveries)
 
     async def _format_list(self) -> str:
         """生成监控项清单文本。
@@ -603,9 +762,9 @@ class WatchdocPlugin(Star):
 
         lines = [f"共 {len(targets)} 个监控项："]
         for item in targets:
-            snap = self.snapshot_dir / f"{safe_name(str(item.get('id') or ''))}.md"
+            doc_dir = self.snapshot_dir / safe_name(str(item.get("id") or ""))
             flag = "启用" if item.get("enabled", True) else "停用"
-            status = "已建立基线" if snap.exists() else "尚未建立基线"
+            status = "已建立基线" if doc_dir.is_dir() else "尚未建立基线"
             sessions = len(item.get("sessions") or [])
             push = f"推送 {sessions} 个会话" if sessions else "未配置推送"
             lines.append(

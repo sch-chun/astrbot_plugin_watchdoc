@@ -79,26 +79,38 @@ def get_provider(context: Context, provider_id: str):
     return context.get_using_provider()
 
 
-async def summarize(provider, target: dict, diff: str, persona_prompt: str = "") -> str:
-    """调用 LLM 总结 diff。
+async def summarize(provider, target: dict, changed_docs: list[dict], persona_prompt: str = "") -> str:
+    """调用 LLM 总结若干变化文档。
 
     Args:
         provider: 模型 Provider，为 None 时返回原始 diff。
         target: 监控项配置。
-        diff: unified diff 文本。
+        changed_docs: 本次变化的文档列表，每项含 name/url/diff。
         persona_prompt: 会话人格的 system prompt，非空时追加到系统提示。
 
     Returns:
         总结文本。调用失败时返回带说明的原文片段。
     """
     if provider is None:
-        return f"（未获取到 LLM Provider，以下为原始 diff）\n\n{diff}"
+        joined = "\n\n".join(
+            f"文档：{d.get('name') or d.get('url')}\n地址：{d.get('url')}\n\n{d.get('diff') or ''}"
+            for d in changed_docs
+        )
+        return f"（未获取到 LLM Provider，以下为原始 diff）\n\n{joined}"
 
+    parts = []
+    for i, d in enumerate(changed_docs, 1):
+        parts.append(
+            f"文档 {i}：{d.get('name') or d.get('url')}\n"
+            f"地址：{d.get('url')}\n\n"
+            f"以下为该文档本次抓取与上次快照之间的 unified diff：\n\n{d.get('diff') or ''}"
+        )
     prompt = (
-        f"文档名称：{target.get('name') or target.get('id')}\n"
-        f"文档地址：{target.get('url')}\n\n"
-        f"{task_instruction(target)}\n\n"
-        f"以下是本次抓取与上次快照之间的 unified diff：\n\n{diff}"
+        f"监控项：{target.get('name') or target.get('id')}\n\n"
+        f"本次检测中，以下 {len(changed_docs)} 篇文档同属一个监控组并发生了变化，"
+        "请关联起来一并总结（不要逐篇孤立地写）：\n\n"
+        + "\n\n".join(parts)
+        + f"\n\n{task_instruction(target)}"
     )
     system_prompt = _system_prompt(persona_prompt)
     try:
@@ -109,7 +121,8 @@ async def summarize(provider, target: dict, diff: str, persona_prompt: str = "")
         )
     except Exception as exc:  # noqa: BLE001
         logger.error(f"[watchdoc] 调用 LLM 失败: {exc}")
-        return f"（AI 总结失败：{exc}）\n\n原始 diff:\n{diff}"
+        joined = "\n\n".join(d.get("diff") or "" for d in changed_docs)
+        return f"（AI 总结失败：{exc}）\n\n原始 diff:\n{joined}"
 
     return (resp.completion_text or "").strip() or "（LLM 返回空内容）"
 
@@ -117,7 +130,7 @@ async def summarize(provider, target: dict, diff: str, persona_prompt: str = "")
 async def summarize_with_agent(
     context: Context,
     target: dict,
-    change: dict,
+    changed_docs: list[dict],
     group: dict,
     provider_id: str,
     tools: ToolSet,
@@ -128,7 +141,7 @@ async def summarize_with_agent(
     Args:
         context: 插件上下文。
         target: 监控项配置。
-        change: 含 before / after / diff 的变更数据。
+        changed_docs: 本次变化的文档列表，每项含 name/url/before/after/diff。
         group: 人格分组。
         provider_id: 模型 ID。
         tools: 可用工具集。
@@ -151,17 +164,26 @@ async def summarize_with_agent(
     # 不按插件白名单过滤，本插件的查阅工具必须可见
     event.plugins_name = None
 
+    parts = []
+    for i, d in enumerate(changed_docs, 1):
+        parts.append(
+            f"文档 {i}：{d.get('name') or d.get('url')}\n"
+            f"地址：{d.get('url')}\n\n{d.get('diff') or ''}"
+        )
+    doc_list = "；".join(
+        f"#{i + 1} {d.get('name') or d.get('url')}"
+        for i, d in enumerate(changed_docs)
+    )
     prompt = (
-        f"文档名称：{target.get('name') or target.get('id')}\n"
-        f"文档地址：{target.get('url')}\n\n"
-        f"{task_instruction(target, agent=True)}\n\n"
+        f"监控项：{target.get('name') or target.get('id')}\n\n"
+        f"本次检测中，以下 {len(changed_docs)} 篇文档同属一个监控组并发生了变化，"
+        "请关联起来一并总结：\n\n"
+        + "\n\n".join(parts)
+        + f"\n\n{task_instruction(target, agent=True)}\n\n"
         "diff 的 @@ 行号对应原文行号，需要更多上下文时可用 "
-        f"{DOC_TOOL_NAMES[0]} 按 start_line / line_count 读取指定行区间，"
-        f"或用 {DOC_TOOL_NAMES[1]} 搜索关键词定位。\n\n"
-        f"以下是本次抓取与上次快照之间的 unified diff：\n\n{change['diff']}\n\n"
-        # 行数是动态的，放最后才不会截断可缓存的前缀
-        f"变更前原文 {len(change['before'].splitlines())} 行，"
-        f"变更后 {len(change['after'].splitlines())} 行。"
+        f"{DOC_TOOL_NAMES[0]} 按 doc / start_line / line_count 读取指定文档的指定行区间，"
+        f"或用 {DOC_TOOL_NAMES[1]} 在指定文档中搜索关键词。\n"
+        f"可用文档：{doc_list}"
     )
     system_prompt = _system_prompt(group["prompt"])
 
@@ -226,6 +248,14 @@ def doc_tools(read_handler, search_handler) -> list[FunctionTool]:
     Returns:
         工具列表。只在 agent 循环里可见，不注册到全局工具集。
     """
+    doc_ref = {
+        "type": "string",
+        "description": (
+            "文档引用：#1/#2 这样的序号，或文档地址子串。"
+            "单文档监控项可省略（默认取唯一一篇）；"
+            "多文档监控项必须指定，省略会返回可用文档列表让你选择。"
+        ),
+    }
     scope = {"type": "string", "description": "before 表示变更前，after 表示变更后"}
     return [
         FunctionTool(
@@ -237,6 +267,7 @@ def doc_tools(read_handler, search_handler) -> list[FunctionTool]:
             parameters={
                 "type": "object",
                 "properties": {
+                    "doc": doc_ref,
                     "scope": scope,
                     "start_line": {
                         "type": "number",
@@ -264,6 +295,7 @@ def doc_tools(read_handler, search_handler) -> list[FunctionTool]:
                 "type": "object",
                 "properties": {
                     "keyword": {"type": "string", "description": "要搜索的关键词"},
+                    "doc": doc_ref,
                     "scope": scope,
                 },
                 "required": ["keyword", "scope"],
@@ -274,17 +306,17 @@ def doc_tools(read_handler, search_handler) -> list[FunctionTool]:
 
 
 def read_lines(
-    run: dict,
+    doc: dict,
     scope: str,
     start_line: int = 1,
     line_count: int = TOOL_READ_DEFAULT_LINES,
 ) -> str:
-    """按行号区间读取原文。
+    """按行号区间读取某篇变化文档的原文。
 
     返回内容带行号，便于和 diff 里的 hunk 行号对照定位。
 
     Args:
-        run: 本次变更数据，需含 before / after。
+        doc: 变化文档数据，需含 before / after。
         scope: before 或 after。
         start_line: 起始行号，从 1 开始。
         line_count: 读取行数。
@@ -294,7 +326,7 @@ def read_lines(
     """
     key = "before" if scope == "before" else "after"
     label = "变更前原文" if key == "before" else "变更后原文"
-    lines = (run.get(key) or "").splitlines()
+    lines = (doc.get(key) or "").splitlines()
     if not lines:
         return f"{label}为空。"
     total = len(lines)
@@ -323,18 +355,18 @@ def read_lines(
     return head + "\n".join(parts) + tip
 
 
-def search_lines(run: dict, keyword: str, scope: str) -> str:
+def search_lines(doc: dict, keyword: str, scope: str) -> str:
     """在原文中搜索关键词，返回命中行及其前后的若干行。
 
     Args:
-        run: 本次变更数据，需含 before / after。
+        doc: 变化文档数据，需含 before / after。
         keyword: 搜索关键词。
         scope: before 或 after。
 
     Returns:
         带行号的命中片段，未命中时给出说明。
     """
-    lines = (run.get("before" if scope == "before" else "after") or "").splitlines()
+    lines = (doc.get("before" if scope == "before" else "after") or "").splitlines()
     if not keyword or not lines:
         return "没有可搜索的内容，或关键词为空。"
     hits = []
