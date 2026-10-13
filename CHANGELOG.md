@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.7] - 2026-10-13
+
+### Fixed
+
+- **删除监控项时保存失败**：列表里残留的旧版单 `url` 监控项没有 `documents` 字段，`normalize_targets` 不会补，导致「删除监控项」整体保存被后端以「每个监控项都必须含 documents 数组」拒收、连删除都存不下来。改为在面板保存时机把 `url` 一次性收成 `documents` 结构（与「由面板保存时转成 documents 结构」的迁移约定一致），只发生在保存边界、不碰存储层；新格式项原样透传，既无 `documents` 也无 `url` 的残缺项保持原样（删除它会从列表移除，不会进载荷）。
+
 ## [0.1.6] - 2026-10-12
 
 ### Added
