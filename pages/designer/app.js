@@ -883,9 +883,10 @@ async function persist() {
   const payload = {
     targets: targets.map((t) => {
       if (Array.isArray(t.documents) && t.documents.length) return t;
-      const url = String(t.url || "").trim();
-      if (!url) return t;
-      return { ...t, documents: [{ url, selector: String(t.selector || "").trim() }] };
+      const { url, selector, ...rest } = t;
+      const trimmedUrl = String(url || "").trim();
+      if (!trimmedUrl) return t;
+      return { ...rest, documents: [{ url: trimmedUrl, selector: String(selector || "").trim() }] };
     }),
   };
   try {
