@@ -877,8 +877,19 @@ function nextId(url) {
 }
 
 async function persist() {
+  // 兼容旧版单 url 配置：保存（含删除监控项）时把 url 一次性收成 documents 结构。
+  // 否则列表里残留的旧格式项会因缺 documents 被后端拒，导致连「删除」都存不下来。
+  // 这正对应「由面板保存时转成 documents 结构」的迁移约定，且只在保存时机发生、不碰存储层。
+  const payload = {
+    targets: targets.map((t) => {
+      if (Array.isArray(t.documents) && t.documents.length) return t;
+      const url = String(t.url || "").trim();
+      if (!url) return t;
+      return { ...t, documents: [{ url, selector: String(t.selector || "").trim() }] };
+    }),
+  };
   try {
-    await bridge.apiPost("targets", { targets });
+    await bridge.apiPost("targets", payload);
     renderList();
     setStatus("配置已保存", "success");
   } catch (error) {
