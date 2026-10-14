@@ -1,0 +1,7 @@
+# 钉死行宽，避免编辑器按显示宽度自行折行产生无意义 diff（见 PR 评审 P3-2）。
+# 仓库此前没有 pyproject.toml / ruff.toml / setup.cfg，行宽无约定，
+# 导致 v0.1.8 的 main.py 被编辑器按东亚显示宽度折出 8 段纯格式化重排。
+# 行尾统一靠 .gitattributes 的 `* text=auto eol=lf` 根治：ruff 0.16.9 不支持
+# ruff.toml 的 line-ending 字段，且 line-ending=auto 已随文件本身的 LF 原样保留，
+# 所以无需在 ruff 侧重复声明。
+line-length = 88
