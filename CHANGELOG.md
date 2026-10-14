@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.8] - 2026-10-14
+
+### Added
+
+- **自动抓取文档标题并在列表展示**：预览接口（`_api_preview`）回传页面标题，`extract_title` 按 `<title>` → `og:title` → 首 `<h1>` 回退；文档保存时把标题存入 `documents[].name`。「已添加文档」列表第一行显示标题（无标题时退化短网址）+ 选择器，第二行显示完整 URL（悬浮显示全称），长链接用 `direction:rtl` 在开头补省略号、保留末尾更具区分度。
+- **删除监控项提示区分保存**：右上角 `#status` 复用同一元素，删除成功显示「已删除监控项「X」」、保存成功显示「配置已保存」，靠文案而非新增组件区分（KISS）。
+
+### Fixed
+
+- **文档标题保存后丢失**：保存监控项时文档被映射成 `{url, selector}` 漏带 `name`，导致自动抓到的标题落盘时丢失、列表退化成网址（含新加文档）。改为保留 `name`；载入监控项时异步补抓缺标题文档的页面标题回填（历史 / 旧版单文档迁移项无 `name` 也能显示可读标题），回填后静默保存落盘。
+- **缺标题文档每次载入白抓白写**：`backfillDocTitles` 之前无论是否真补到标题都会重写全盘并静默保存，导致抓不回标题的站（需 JS 渲染 / 抓取失败）每次打开该项都重发 preview 请求再写一次盘、`name` 始终为空、下轮继续。改为只在至少一个标题回填成功（`changed`）时才同步 `targets` 并保存。
+- **静默回填却弹报错**：后台补标题走 `persist({silent:true})`，此前 `silent` 只挡了成功文案，`renderList()` 仍整表重建、失败仍弹「保存失败：…」，用户没点任何按钮却看到报错。改为 `silent` 时跳过整表重建与任何状态提示。
+- **`extract_title` 取标题方式不一致**：`<title>` 用 `.string`、`<h1>` 用 `get_text`，极端 RCDATA 写法会返回字面标签。统一为 `get_text(" ", strip=True)`（前端以 `textContent` 渲染，无注入风险，仅显示层面一致）。
+- **前端三文件缺末尾换行**：`pages/designer/{app.js,style.css,index.html}` 末尾未按 `.editorconfig` 的 `insert_final_newline` 补换行（上轮承诺顺手带，本次落实）。
+- **旧版单 `url` 退化分支漏 `name`**：`fillForm` 兼容旧版单文档时退化成 `{url, selector}`，与同处已带 `name` 的写法不一致；补 `name: ""`（实际由回填兜住，无功能影响）。
+
+### Chore
+
+- **行宽与版本一致性机制化（P1 / P3-2）**：新增 `ruff.toml` 钉死 `line-length = 88`，避免编辑器按显示宽度自行折行产生无意义 diff；新增 `.github/workflows/ci.yml`，在 `push(main)` 与 PR 上跑 `ruff format --check` + `ruff check` + `scripts/check_version.py`，卡住 README 徽标 / `metadata.yaml` / `CHANGELOG` 三处版本号不一致（连续两次发版漏改 README 徽标，改为靠 CI 而非记性）。README 版本徽标补到 `v0.1.8`。
+
 ## [0.1.7] - 2026-10-13
 
 ### Fixed

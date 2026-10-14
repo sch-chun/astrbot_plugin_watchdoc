@@ -10,10 +10,9 @@ from collections.abc import Awaitable, Callable
 from urllib.parse import urljoin
 
 import aiohttp
+from astrbot.api import logger
 from bs4 import BeautifulSoup
 from markitdown_no_magika import MarkItDown, StreamInfo
-
-from astrbot.api import logger
 
 from .constants import (
     DEFAULT_UA,
@@ -42,10 +41,12 @@ async def fetch_html(url: str) -> str:
         PageTooLargeError: 响应体超过上限时抛出。
     """
     timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(trust_env=True, timeout=timeout) as session:
-        async with session.get(url, headers={"User-Agent": DEFAULT_UA}) as resp:
-            resp.raise_for_status()
-            return await read_body(resp, MAX_HTML_BYTES)
+    async with (
+        aiohttp.ClientSession(trust_env=True, timeout=timeout) as session,
+        session.get(url, headers={"User-Agent": DEFAULT_UA}) as resp,
+    ):
+        resp.raise_for_status()
+        return await read_body(resp, MAX_HTML_BYTES)
 
 
 async def read_body(resp, limit: int = MAX_HTML_BYTES) -> str:
@@ -113,6 +114,35 @@ def build_soup(html: str) -> BeautifulSoup:
     for tag in soup(["script", "style", "noscript", "template"]):
         tag.decompose()
     return soup
+
+
+def extract_title(soup: BeautifulSoup) -> str:
+    """从页面取出可读标题，供文档列表展示。
+
+    回退链：<title> → og:title → 首 <h1>，都没有返回空串；
+    取到的文本会去除首尾空白，空结果继续向下回退。
+
+    Args:
+        soup: 已解析的 BeautifulSoup 对象。
+
+    Returns:
+        标题字符串，取不到时为空串。
+    """
+    if soup.title:
+        text = soup.title.get_text(" ", strip=True)
+        if text:
+            return text
+    og = soup.find("meta", attrs={"property": "og:title"})
+    if og and og.get("content"):
+        text = str(og.get("content")).strip()
+        if text:
+            return text
+    h1 = soup.find("h1")
+    if h1:
+        text = h1.get_text(" ", strip=True)
+        if text:
+            return text
+    return ""
 
 
 def to_markdown(html: str, selector: str, tid: str) -> str:

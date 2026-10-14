@@ -6,7 +6,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.24.0-blueviolet)](https://github.com/AstrBotDevs/AstrBot)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v0.1.7-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.1.8-green)](CHANGELOG.md)
 
 ---
 
@@ -135,7 +135,7 @@ https://github.com/sch-chun/astrbot_plugin_watchdoc
 ## 开发
 
 ```bash
-pytest -q            # 101 条用例，全部离线，不依赖网络
+pytest -q            # 108 条用例，全部离线，不依赖网络
 ruff format . && ruff check .
 ```
 

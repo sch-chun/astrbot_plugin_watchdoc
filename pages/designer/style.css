@@ -757,15 +757,23 @@ ul {
 }
 
 .doc-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  grid-template-areas:
+    "idx title sel del"
+    "url url url url";
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
+  row-gap: 2px;
   padding: 6px 8px;
   margin-bottom: 4px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
 }
+
+.doc-index { grid-area: idx; }
+.doc-del { grid-area: del; }
 
 .doc-item.current {
   border-color: var(--accent);
@@ -775,14 +783,39 @@ ul {
 /* 路径过长时由 CSS 在「开头」补省略号（保留末尾更具区分度）：
    direction:rtl 让 inline 起点在右、溢出裁左侧并补左侧省略号；
    text-align:left 让短路径仍正常左对齐，不被 rtl 顶到右边 */
+/* 文档行第一行的主标识：页面标题（抓回存进文档 name），没有时退化为短网址 */
+.doc-title {
+  grid-area: title;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* 文档行第二行：完整 URL，链接偏长给整行；悬浮（title）显示完整链接。
+   direction:rtl 让超长网址在「开头」补省略号、保留末尾更具区分度 */
 .doc-url {
-  flex: 1;
+  grid-area: url;
   min-width: 0;
   direction: rtl;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+
+/* 文档行第一行附带展示该篇文档的选择器（监控区域）；muted 弱于标题，过长省略、悬停看全称 */
+.doc-selector {
+  grid-area: sel;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
   font-family: ui-monospace, monospace;
   font-size: 11px;
 }

@@ -69,6 +69,8 @@ let defaultInstruction = "";
 let currentUrl = "";
 // 当前已选选择器：只在点选候选时更新，不再走手动输入框
 let currentSelector = "";
+// 当前抓取页面的标题：加文档时随预览一并取回，落进文档的 name 字段，让文档列表更可读
+let currentTitle = "";
 
 /* ---------- 列表伸缩动画 ---------- */
 
@@ -567,7 +569,7 @@ function renderList() {
             editingId = null;
             setFormMode("");
           }
-          persist();
+          persist({ successMsg: `已删除监控项「${name}」` });
         });
       });
 
@@ -601,10 +603,10 @@ function fillForm(item) {
   editingId = item.id || null;
   // 兼容旧版单 url：没有 documents 时退化为单文档
   currentDocs = (item.documents || [])
-    .map((d) => ({ url: String(d.url || ""), selector: String(d.selector || "") }))
+    .map((d) => ({ url: String(d.url || ""), selector: String(d.selector || ""), name: String(d.name || "") }))
     .filter((d) => d.url);
   if (!currentDocs.length && item.url) {
-    currentDocs = [{ url: item.url, selector: item.selector || "" }];
+    currentDocs = [{ url: item.url, selector: item.selector || "", name: "" }];
   }
   editingDocIndex = null; // 选中监控项不默认进入任何文档的编辑态，高亮留给点具体文档行时再出现
   el.name.value = item.name || "";
@@ -622,6 +624,9 @@ function fillForm(item) {
   el.matchCollapse.classList.remove("open");
   showForm();
   renderList();
+  // 载入监控项后补抓缺标题文档的页面标题（历史/旧版迁移项没有 name，只能退化成网址）；
+  // 不阻塞首屏，也不要求用户手动重存即可让列表可读
+  backfillDocTitles();
 }
 
 // 默认文案只有从后端拿到之后才存在，所以抓取成功、新建两种时机都要补一次
@@ -683,7 +688,7 @@ function commitDraft() {
   const url = el.url.value.trim();
   if (!url) return;
   const selector = currentSelector.trim();
-  const entry = { url, selector };
+  const entry = { url, selector, name: currentTitle };
   if (editingDocIndex !== null && currentDocs[editingDocIndex]) {
     currentDocs[editingDocIndex] = entry;
   } else if (selector && !currentDocs.some((d) => d.url === url)) {
@@ -699,6 +704,7 @@ function loadDraftDoc() {
   const url = doc ? doc.url : "";
   el.url.value = url;
   currentSelector = doc ? doc.selector : "";
+  currentTitle = doc ? (doc.name || "") : "";
   // 编辑已经有选择器的旧文档时保持按钮可用；空草稿（新增首篇）则变灰，引导先点选
   el.saveDoc.disabled = !doc || !doc.selector;
   currentUrl = url;
@@ -717,6 +723,7 @@ function startNewDoc() {
   editingDocIndex = null;
   currentUrl = "";
   currentSelector = "";
+  currentTitle = "";
   el.saveDoc.disabled = true; // 未选区域前按钮保持灰
   el.url.value = "";
   el.preview.innerHTML = "";
@@ -739,7 +746,7 @@ function startNewDoc() {
 function saveCurrentDoc() {
   const url = currentUrl.trim();
   if (!url) return setStatus("先抓取并（可选）选取区域，再保存文档", "warn");
-  const entry = { url, selector: currentSelector.trim() };
+  const entry = { url, selector: currentSelector.trim(), name: currentTitle };
   if (editingDocIndex !== null && currentDocs[editingDocIndex]) {
     currentDocs[editingDocIndex] = entry;
   } else if (!currentDocs.some((d) => d.url === url)) {
@@ -752,6 +759,7 @@ function saveCurrentDoc() {
   el.url.value = "";
   currentUrl = "";
   currentSelector = "";
+  currentTitle = "";
   el.saveDoc.disabled = true; // 已无选中区域，按钮重新变灰，引导先点选
   el.preview.innerHTML = "";
   animateList(el.candidates, () => {
@@ -793,9 +801,20 @@ function renderDocList() {
     const idxLabel = document.createElement("span");
     idxLabel.className = "doc-index";
     idxLabel.textContent = `${idx + 1}.`;
-    const label = document.createElement("span");
-    label.className = "doc-url";
-    label.textContent = shortUrl(doc.url);
+    // 第一行：标题（主标识）+ 选择器；第二行：完整 URL（悬浮看全称）。
+    // 标题优先用抓回的页面标题（文档 name），没有时退化为短网址，保证列表始终可读
+    const titleSpan = document.createElement("span");
+    titleSpan.className = "doc-title";
+    titleSpan.textContent = doc.name ? doc.name : shortUrl(doc.url);
+    titleSpan.title = doc.name || "";
+    const selSpan = document.createElement("span");
+    selSpan.className = "doc-selector";
+    selSpan.textContent = doc.selector ? doc.selector : "（未选区域）";
+    selSpan.title = doc.selector || "";
+    const urlSpan = document.createElement("span");
+    urlSpan.className = "doc-url";
+    urlSpan.textContent = shortUrl(doc.url);
+    urlSpan.title = doc.url; // 悬浮显示完整链接
     // 点整行即进入该文档的编辑（抓取预览 + 填候选），不再单列「编辑」按钮
     li.addEventListener("click", () => {
       editingDocIndex = idx;
@@ -810,10 +829,55 @@ function renderDocList() {
       removeDoc(idx, li);
     });
     li.appendChild(idxLabel);
-    li.appendChild(label);
+    li.appendChild(titleSpan);
+    li.appendChild(selSpan);
+    li.appendChild(urlSpan);
     li.appendChild(del);
     el.docList.appendChild(li);
   });
+}
+
+// 文档缺标题（旧版单文档迁移项、或早于「自动抓标题」功能保存的项）时，列表只能退化成网址。
+// 载入监控项后异步补抓每篇文档的页面标题回填：不阻塞首屏渲染，也让历史项无需用户手动重存
+// 即可显示可读标题。只补「没有 name」的文档，已有标题的不动；回填后同步回全局 targets 并静默保存，
+// 使标题落盘、下次加载直接读缓存。editingId 在抓取期间若被切走则放弃同步，避免污染其它项。
+async function backfillDocTitles() {
+  if (!editingId) return;
+  const myId = editingId;
+  const pending = currentDocs.filter((d) => d && d.url && !d.name);
+  if (!pending.length) return;
+  let changed = false;
+  try {
+    await Promise.all(
+      pending.map(async (doc) => {
+        try {
+          const data = await bridge.apiGet("preview", { url: doc.url });
+          if (data && data.title) {
+            doc.name = data.title;
+            changed = true;
+          }
+        } catch (_) {
+          /* 单篇失败不影响其余 */
+        }
+      }),
+    );
+    // 没有任何标题回填成功时直接返回：抓不回标题的站（需 JS 渲染 / 抓取失败）
+    // 若照常写盘，下次载入该项仍无 name、会继续重抓重写，等于每次白抓白写
+    if (!changed) return;
+    if (editingId === myId) renderDocList();
+    // 同步回全局 targets 对应项，再静默保存，让标题落盘
+    const idx = targets.findIndex((t) => t.id === myId);
+    if (idx >= 0) {
+      targets[idx].documents = currentDocs.map((d) => ({
+        url: d.url,
+        selector: d.selector,
+        name: d.name || "",
+      }));
+    }
+    if (editingId === myId) await persist({ silent: true });
+  } catch (_) {
+    /* 回填失败不阻塞使用 */
+  }
 }
 
 // 移除一篇文档：先弹确认框（与监控项删除同一套模态），确认后再把该行收缩到 0 高度、
@@ -876,7 +940,7 @@ function nextId(url) {
   return candidate;
 }
 
-async function persist() {
+async function persist(opts = {}) {
   // 兼容旧版单 url 配置：保存（含删除监控项）时把 url 一次性收成 documents 结构。
   // 否则列表里残留的旧格式项会因缺 documents 被后端拒，导致连「删除」都存不下来。
   // 这正对应「由面板保存时转成 documents 结构」的迁移约定，且只在保存时机发生、不碰存储层。
@@ -891,10 +955,16 @@ async function persist() {
   };
   try {
     await bridge.apiPost("targets", payload);
-    renderList();
-    setStatus("配置已保存", "success");
+    // 删除操作传 successMsg 覆盖通用「配置已保存」，让右上角状态区分保存与删除；
+    // 二者都在同一 #status（页头右上角），不另造通知组件。
+    // silent（后台回填）时跳过整表重建与任何状态提示：用户没点按钮却看到报错会很莫名其妙，
+    // 而且回填自身会重试，不需要用成功 / 失败文案打扰
+    if (!opts.silent) {
+      renderList();
+      setStatus(opts.successMsg || "配置已保存", "success");
+    }
   } catch (error) {
-    setStatus(`保存失败：${error.message}`, "error");
+    if (!opts.silent) setStatus(`保存失败：${error.message}`, "error");
   }
 }
 
@@ -996,6 +1066,7 @@ async function doFetch(url) {
     highlightMatches(currentSelector.trim());
     el.url.value = url;
     currentUrl = url;
+    currentTitle = (data && data.title) || "";
     // 抓取了与「正在编辑的文档」不同的网址，说明要新增一篇而非覆盖原文档：
     // 退出编辑态，saveCurrentDoc 才会走追加分支，否则编辑监控项时无法新增文档
     if (editingDocIndex !== null && currentDocs[editingDocIndex] && currentDocs[editingDocIndex].url !== url) {
@@ -1055,7 +1126,8 @@ el.save.addEventListener("click", async () => {
   const record = {
     id,
     name: name || id,
-    documents: currentDocs.map((d) => ({ url: d.url, selector: d.selector })),
+    // 保留每篇文档的 name（自动抓回的页面标题）：漏带会丢失标题，列表退化成网址
+    documents: currentDocs.map((d) => ({ url: d.url, selector: d.selector, name: d.name || "" })),
     instruction: el.instruction.value.trim(),
     enabled: el.enabled.checked,
     sessions: [...selectedSessions],

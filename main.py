@@ -202,11 +202,15 @@ class WatchdocPlugin(Star):
             )
             current = await asyncio.to_thread(self._normalize, current, target)
             if not current.strip():
-                logger.warning(f"[watchdoc] {tid}/{slug} 抓取内容为空，页面可能需要 JS 渲染")
+                logger.warning(
+                    f"[watchdoc] {tid}/{slug} 抓取内容为空，页面可能需要 JS 渲染"
+                )
                 continue
 
             new_path = doc_dir / f"{slug}.md"
-            previous = new_path.read_text(encoding="utf-8") if new_path.exists() else None
+            previous = (
+                new_path.read_text(encoding="utf-8") if new_path.exists() else None
+            )
             if previous is None and len(docs) == 1:
                 # 迁移兜底：旧单文档基线在 snapshots/{tid}.md，一次性搬进分组目录
                 legacy = self.snapshot_dir / f"{safe_name(tid)}.md"
@@ -219,7 +223,9 @@ class WatchdocPlugin(Star):
             if previous is None:
                 doc_dir.mkdir(parents=True, exist_ok=True)
                 new_path.write_text(current, encoding="utf-8")
-                logger.info(f"[watchdoc] {tid}/{slug} 已建立初始基线（{len(current)} 字符）")
+                logger.info(
+                    f"[watchdoc] {tid}/{slug} 已建立初始基线（{len(current)} 字符）"
+                )
                 continue
 
             if digest(current) == digest(previous):
@@ -401,10 +407,12 @@ class WatchdocPlugin(Star):
             )
 
         soup = await asyncio.to_thread(fetch.build_soup, html)
+        title = fetch.extract_title(soup)
         return json_response(
             {
                 "html": self._sanitize_for_preview(html, url),
                 "textLength": len(soup.get_text(" ", strip=True)),
+                "title": title,
             }
         )
 
@@ -701,9 +709,11 @@ class WatchdocPlugin(Star):
         """
         title = target.get("name") or target.get("id")
         # 列出本次监控的文档地址；兼容旧版单 url
-        doc_lines = "\n".join(
-            f"- {d.get('url')}" for d in (target.get("documents") or [])
-        ) or target.get("url") or ""
+        doc_lines = (
+            "\n".join(f"- {d.get('url')}" for d in (target.get("documents") or []))
+            or target.get("url")
+            or ""
+        )
         pushed = False
         for summary_text, umos in deliveries:
             if not umos:
@@ -718,9 +728,7 @@ class WatchdocPlugin(Star):
                     logger.error(f"[watchdoc] 推送到 {umo} 失败: {exc}")
                     continue
                 try:
-                    await self._append_history(
-                        umo, str(title), doc_lines, text
-                    )
+                    await self._append_history(umo, str(title), doc_lines, text)
                 except Exception as exc:  # noqa: BLE001
                     logger.error(f"[watchdoc] 追加 {umo} 会话历史失败: {exc}")
 
