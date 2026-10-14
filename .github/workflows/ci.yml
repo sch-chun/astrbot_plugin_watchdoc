@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        # 与本地一致的版本，避免格式规则漂移产生误报
+        run: pip install ruff==0.16.9
+      - name: Ruff format check
+        # 卡住编辑器按显示宽度自行折行产生的无意义 diff（见评审 P3-2）
+        run: ruff format --check .
+      - name: Ruff check
+        run: ruff check .
+      - name: Version consistency
+        # README 徽标 / metadata.yaml / CHANGELOG 三处版本必须一致（见评审 P1）
+        run: python scripts/check_version.py

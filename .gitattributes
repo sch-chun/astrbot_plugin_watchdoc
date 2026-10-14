@@ -2,3 +2,8 @@
 # 但发布打包（git archive / 插件市场构建）时排除，不随插件分发出去。
 tests/ export-ignore
 pytest.ini export-ignore
+
+# 强制仓库内文本统一 LF 行尾（见 PR 评审：v0.1.8 的修复在 Windows 上经 autocrlf=true
+# 被翻成 CRLF，撑爆 diff 且违反 .editorconfig 的 end_of_line=lf）。eol=lf 让
+# checkout/commit 都归一为 LF，是行尾问题的根治，不依赖本地 autocrlf 设置。
+* text=auto eol=lf
