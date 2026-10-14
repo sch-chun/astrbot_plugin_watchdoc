@@ -8,13 +8,12 @@ import json
 import threading
 
 import pytest
+from astrbot.api import FunctionTool, ToolSet
+from astrbot.api import web as web_mod
 from astrbot_plugin_watchdoc import main as main_mod
 from astrbot_plugin_watchdoc.main import WatchdocPlugin
 from astrbot_plugin_watchdoc.src import constants, fetch, summary, text
 from bs4.element import Tag
-
-from astrbot.api import FunctionTool, ToolSet
-from astrbot.api import web as web_mod
 
 # 含导航栏噪音（「最后更新」）与正文页面的最小 HTML
 HTML = """<html><body>
@@ -83,9 +82,7 @@ class FakeCronManager:
         self.jobs.pop(job_id, None)
 
     async def add_basic_job(self, name, cron_expression, handler, **kwargs):
-        job = FakeJob(
-            name, name, cron_expression, bool(kwargs.get("enabled", True))
-        )
+        job = FakeJob(name, name, cron_expression, bool(kwargs.get("enabled", True)))
         self.jobs[name] = job
         return job
 
@@ -309,12 +306,8 @@ def make_plugin(
     conversation_manager=None,
 ):
     """构造一个数据目录指向 tmp_path 的插件实例。"""
-    monkeypatch.setattr(
-        main_mod, "get_astrbot_plugin_data_path", lambda: str(tmp_path)
-    )
-    ctx = FakeContext(
-        provider, conversations, persona_manager, conversation_manager
-    )
+    monkeypatch.setattr(main_mod, "get_astrbot_plugin_data_path", lambda: str(tmp_path))
+    ctx = FakeContext(provider, conversations, persona_manager, conversation_manager)
     plugin = WatchdocPlugin(ctx, config)
     # 用例里的 config["targets"] 视为已经存进 KV 的监控项
     ctx.kv = FakeKV({"targets": config["targets"]} if "targets" in config else {})
@@ -400,7 +393,11 @@ async def test_first_run_builds_baseline_without_llm(monkeypatch, tmp_path):
 
     await plugin._check_all()
 
-    snap = plugin.snapshot_dir / text.safe_name("demo") / f"{text.safe_name('https://example.com/doc')}.md"
+    snap = (
+        plugin.snapshot_dir
+        / text.safe_name("demo")
+        / f"{text.safe_name('https://example.com/doc')}.md"
+    )
     assert snap.exists()
     assert "非流式返回音频文件 URL" in snap.read_text(encoding="utf-8")
     assert "最后更新" not in snap.read_text(encoding="utf-8")  # 导航噪音被裁剪掉
@@ -454,7 +451,11 @@ async def test_selector_miss_falls_back_to_full_page(monkeypatch, tmp_path):
 
     await plugin._check_all()
 
-    snap = plugin.snapshot_dir / text.safe_name("demo") / f"{text.safe_name('https://example.com/doc')}.md"
+    snap = (
+        plugin.snapshot_dir
+        / text.safe_name("demo")
+        / f"{text.safe_name('https://example.com/doc')}.md"
+    )
     assert snap.exists()
     assert "页脚" in snap.read_text(encoding="utf-8")  # 整页包含页脚
 
@@ -466,7 +467,11 @@ async def test_empty_content_skipped(monkeypatch, tmp_path):
 
     await plugin._check_all()
 
-    assert not (plugin.snapshot_dir / text.safe_name("demo") / f"{text.safe_name('https://example.com/doc')}.md").exists()
+    assert not (
+        plugin.snapshot_dir
+        / text.safe_name("demo")
+        / f"{text.safe_name('https://example.com/doc')}.md"
+    ).exists()
     assert ctx.provider.calls == []
 
 
@@ -503,18 +508,24 @@ async def test_ignore_patterns_suppresses_noise_only(monkeypatch, tmp_path):
 
 async def test_invalid_ignore_pattern_does_not_crash(monkeypatch, tmp_path):
     """非法正则不应让整个检查崩掉。"""
-    plugin, _ = make_plugin(monkeypatch, tmp_path, {"targets": [TARGET], "ignore_patterns": ["(["]})
+    plugin, _ = make_plugin(
+        monkeypatch, tmp_path, {"targets": [TARGET], "ignore_patterns": ["(["]}
+    )
     patch_fetch(monkeypatch, plugin, HTML)
 
     await plugin._check_all()
 
-    assert (plugin.snapshot_dir / text.safe_name("demo") / f"{text.safe_name('https://example.com/doc')}.md").exists()
+    assert (
+        plugin.snapshot_dir
+        / text.safe_name("demo")
+        / f"{text.safe_name('https://example.com/doc')}.md"
+    ).exists()
 
 
 async def test_notify_appends_pushed_text_to_history(monkeypatch, tmp_path):
     """推送成功后要写进该会话的对话历史，且是 user / assistant 成对写入。"""
     manager = FakeConversationManager(current={"a:GroupMessage:1": "cid-1"})
-    plugin, ctx = make_plugin(
+    plugin, _ctx = make_plugin(
         monkeypatch,
         tmp_path,
         {"targets": [{**TARGET, "sessions": ["a:GroupMessage:1"]}]},
@@ -537,7 +548,7 @@ async def test_notify_appends_pushed_text_to_history(monkeypatch, tmp_path):
 async def test_notify_creates_conversation_when_missing(monkeypatch, tmp_path):
     """会话从没说过话时没有当前对话，要新建一个再写历史。"""
     manager = FakeConversationManager()
-    plugin, ctx = make_plugin(
+    plugin, _ctx = make_plugin(
         monkeypatch,
         tmp_path,
         {"targets": [{**TARGET, "sessions": ["a:GroupMessage:1"]}]},
@@ -592,7 +603,10 @@ async def test_target_without_sessions_archives_only(monkeypatch, tmp_path):
 async def test_llm_failure_falls_back_to_raw_diff(monkeypatch, tmp_path):
     """LLM 调用失败时降级为原始 diff，而不是丢掉这次变更。"""
     plugin, ctx = make_plugin(
-        monkeypatch, tmp_path, {"targets": [TARGET]}, provider=FakeProvider(raise_on_call=True)
+        monkeypatch,
+        tmp_path,
+        {"targets": [TARGET]},
+        provider=FakeProvider(raise_on_call=True),
     )
     patch_fetch(monkeypatch, plugin, HTML)
     await plugin._check_all()
@@ -633,7 +647,10 @@ async def test_notify_pushes_to_every_configured_session(monkeypatch, tmp_path):
     patch_fetch(monkeypatch, plugin, HTML.replace("非流式", "流式"))
     await plugin._check_all()
 
-    assert [session for session, _ in ctx.sent] == ["a:GroupMessage:1", "b:GroupMessage:2"]
+    assert [session for session, _ in ctx.sent] == [
+        "a:GroupMessage:1",
+        "b:GroupMessage:2",
+    ]
 
 
 async def test_notify_keeps_going_when_one_session_fails(monkeypatch, tmp_path):
@@ -1024,7 +1041,9 @@ async def test_tool_read_document_reads_line_range(monkeypatch, tmp_path):
     plugin, _ = make_plugin(monkeypatch, tmp_path, {})
     event = set_run(plugin, after="\n".join(f"第{i}行" for i in range(1, 301)))
 
-    result = await plugin._tool_read_document(event, scope="after", start_line=100, line_count=3)
+    result = await plugin._tool_read_document(
+        event, scope="after", start_line=100, line_count=3
+    )
     assert result.startswith("变更后原文共 300 行，以下是第 100-102 行：")
     assert "100: 第100行" in result
     assert "99: 第99行" not in result
@@ -1060,7 +1079,9 @@ async def test_tool_read_document_respects_char_budget(monkeypatch, tmp_path):
     plugin, _ = make_plugin(monkeypatch, tmp_path, {})
     event = set_run(plugin, after="\n".join(["x" * 1000] * 100))
 
-    result = await plugin._tool_read_document(event, scope="after", start_line=1, line_count=100)
+    result = await plugin._tool_read_document(
+        event, scope="after", start_line=1, line_count=100
+    )
     assert len(result) < constants.TOOL_READ_CHARS * 2
 
 
@@ -1093,16 +1114,21 @@ async def test_doc_tools_without_active_run(monkeypatch, tmp_path):
     event = FakeEvent("a:GroupMessage:1")
 
     assert "没有正在处理" in await plugin._tool_read_document(event, "after")
-    assert "没有正在处理" in await plugin._tool_search_document(event, "关键词", "after")
+    assert "没有正在处理" in await plugin._tool_search_document(
+        event, "关键词", "after"
+    )
 
 
 async def test_sessions_field_is_normalized_on_load(monkeypatch, tmp_path):
     """sessions 可能是手改出来的字符串或含空值，读取时要收敛成去重列表。"""
-    plugin, ctx = make_plugin(monkeypatch, tmp_path, {})
+    plugin, _ctx = make_plugin(monkeypatch, tmp_path, {})
     await plugin._save_targets(
         [
             {**TARGET, "sessions": "solo:GroupMessage:9"},
-            {**SILENT_TARGET, "sessions": ["x:GroupMessage:1", " x:GroupMessage:1 ", ""]},
+            {
+                **SILENT_TARGET,
+                "sessions": ["x:GroupMessage:1", " x:GroupMessage:1 ", ""],
+            },
         ]
     )
 
@@ -1134,7 +1160,9 @@ async def test_api_sessions_lists_distinct_umos(monkeypatch, tmp_path):
 
 async def test_cron_registration_is_idempotent(monkeypatch, tmp_path):
     """重复注册不应在面板上累积多个任务。"""
-    plugin, ctx = make_plugin(monkeypatch, tmp_path, {"targets": [TARGET], "cron": "0 */6 * * *"})
+    plugin, ctx = make_plugin(
+        monkeypatch, tmp_path, {"targets": [TARGET], "cron": "0 */6 * * *"}
+    )
 
     await plugin._sync_cron_job()
     await plugin._sync_cron_job()
@@ -1199,7 +1227,9 @@ async def test_sync_preserves_manually_disabled_job(monkeypatch, tmp_path):
 
 async def test_sync_picks_up_cron_config_change(monkeypatch, tmp_path):
     """配置里的 cron 改了，重新同步要换上新表达式。"""
-    plugin, ctx = make_plugin(monkeypatch, tmp_path, {"targets": [TARGET], "cron": "0 */6 * * *"})
+    plugin, ctx = make_plugin(
+        monkeypatch, tmp_path, {"targets": [TARGET], "cron": "0 */6 * * *"}
+    )
     await plugin.initialize()
     plugin.config["cron"] = "0 * * * *"
 
@@ -1336,6 +1366,7 @@ async def test_probe_skips_classless_fallback(monkeypatch, tmp_path):
     suggestion = out.split("建议填：")[1].split("\n")[0]
     assert suggestion in ("main", ".markdown-body")
 
+
 async def test_read_body_rejects_oversized_declared_length():
     """声明的 Content-Length 超限时，一个字节都不该读。"""
     resp = FakeResp(b"x" * 1024, declared=10 * 1024 * 1024)
@@ -1418,12 +1449,14 @@ async def test_probe_fallback_only_weighs_top_level_divs(monkeypatch, tmp_path):
     assert all(div.find_parent("div") is None for div in weighed)
 
 
-async def test_api_save_targets_drops_snapshot_of_removed_item(
-    monkeypatch, tmp_path
-):
+async def test_api_save_targets_drops_snapshot_of_removed_item(monkeypatch, tmp_path):
     """删掉的监控项要连基线快照一起清掉。"""
     plugin, _ = make_plugin(monkeypatch, tmp_path, {"targets": [TARGET]})
-    snap = plugin.snapshot_dir / text.safe_name("demo") / f"{text.safe_name('https://example.com/doc')}.md"
+    snap = (
+        plugin.snapshot_dir
+        / text.safe_name("demo")
+        / f"{text.safe_name('https://example.com/doc')}.md"
+    )
     snap.parent.mkdir(parents=True, exist_ok=True)
     snap.write_text("旧基线", encoding="utf-8")
 
@@ -1432,9 +1465,7 @@ async def test_api_save_targets_drops_snapshot_of_removed_item(
     assert not snap.exists()
 
 
-async def test_api_save_targets_keeps_snapshot_of_remaining_item(
-    monkeypatch, tmp_path
-):
+async def test_api_save_targets_keeps_snapshot_of_remaining_item(monkeypatch, tmp_path):
     """仍在列表里的监控项，其每篇文档的基线快照不能被误删。"""
     target = {
         **TARGET,
@@ -1501,7 +1532,7 @@ def test_sanitize_for_preview_strips_scripts_and_handlers(monkeypatch, tmp_path)
     """预览用的 HTML 不能带脚本和事件属性，否则等于在同源环境执行外部代码。"""
     plugin, _ = make_plugin(monkeypatch, tmp_path, {})
     raw = (
-        '<html><body><script>alert(1)</script>'
+        "<html><body><script>alert(1)</script>"
         '<img src="/img/a.png" onclick="steal()" />'
         '<a href="/other">跳转</a><iframe src="x"></iframe></body></html>'
     )
@@ -1525,10 +1556,10 @@ def test_sanitize_for_preview_makes_lazy_images_loadable(monkeypatch, tmp_path):
     """
     plugin, _ = make_plugin(monkeypatch, tmp_path, {})
     raw = (
-        '<html><body>'
+        "<html><body>"
         '<img data-src="/img/lazy.png" loading="lazy" />'
         '<img data-src="/img/bare.png" />'
-        '</body></html>'
+        "</body></html>"
     )
 
     out = plugin._sanitize_for_preview(raw, "https://example.com/docs/page")
@@ -1554,6 +1585,94 @@ def test_sanitize_for_preview_makes_lazy_images_loadable(monkeypatch, tmp_path):
 def test_looks_stable_judges_selector(selector, expected):
     """稳定性判断要能挡住位置编号、构建 hash 与过长的 class 链。"""
     assert fetch.looks_stable(selector) is expected
+
+
+# ---------------------------------------------------------------------------
+# 自动抓取文档标题（extract_title + 预览接口回传 title）
+# ---------------------------------------------------------------------------
+
+TITLE_HTML = """<html><head><title>非实时语音合成 · 接口文档</title></head>
+<body><main class="markdown-body"><h1>非实时语音合成</h1><p>内容</p></main></body></html>"""
+
+OG_TITLE_HTML = """<html><head>
+<meta property="og:title" content="OpenGraph 标题" />
+</head><body><h1>正文 H1</h1></body></html>"""
+
+H1_TITLE_HTML = (
+    """<html><body><h1>  仅 H1 标题  </h1><p>无 title 无 og</p></body></html>"""
+)
+
+NO_TITLE_HTML = """<html><body><p>没有任何标题标签的页面</p></body></html>"""
+
+
+@pytest.mark.parametrize(
+    "html,expected",
+    [
+        (TITLE_HTML, "非实时语音合成 · 接口文档"),
+        (OG_TITLE_HTML, "OpenGraph 标题"),
+        (H1_TITLE_HTML, "仅 H1 标题"),
+        (NO_TITLE_HTML, ""),
+    ],
+)
+def test_extract_title_falls_back(html, expected):
+    """extract_title 的回退链：<title> → og:title → 首 <h1> → 空串。"""
+    soup = fetch.build_soup(html)
+    assert fetch.extract_title(soup) == expected
+
+
+class FakePreviewRequest:
+    """预览接口只用到 request.query.get，这里给一个最小替身。"""
+
+    def __init__(self, query):
+        self.query = query
+
+
+async def test_api_preview_returns_title(monkeypatch, tmp_path):
+    """预览接口必须把抓取页的标题回传给前端，供文档列表展示。"""
+    plugin, _ = make_plugin(monkeypatch, tmp_path, {})
+    patch_fetch(monkeypatch, plugin, TITLE_HTML)
+
+    token = web_mod._request_var.set(
+        FakePreviewRequest({"url": "https://example.com/doc"})
+    )
+    try:
+        resp = await plugin._api_preview()
+    finally:
+        web_mod._request_var.reset(token)
+
+    body = json.loads(resp.body.decode())
+    assert body["title"] == "非实时语音合成 · 接口文档"
+    # 原有字段不能丢
+    assert "html" in body
+    assert isinstance(body["textLength"], int)
+
+
+async def test_api_save_targets_preserves_doc_name(monkeypatch, tmp_path):
+    """保存监控项时文档的 name（自动抓取标题）必须被保留，不能静默丢弃。"""
+    plugin, ctx = make_plugin(monkeypatch, tmp_path, {})
+    resp = await _call_api(
+        plugin,
+        {
+            "targets": [
+                {
+                    "id": "demo",
+                    "documents": [
+                        {
+                            "url": "https://example.com/doc",
+                            "selector": ".markdown-body",
+                            "name": "非实时语音合成 · 接口文档",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert json.loads(resp.body.decode())["saved"] is True
+    saved = ctx.kv.puts[-1][1]
+    doc = saved[0]["documents"][0]
+    assert doc["name"] == "非实时语音合成 · 接口文档"
+    assert doc["url"] == "https://example.com/doc"
+    assert doc["selector"] == ".markdown-body"
 
 
 # ---------------------------------------------------------------------------
@@ -1592,6 +1711,7 @@ async def test_multi_doc_only_changed_doc_summarized(monkeypatch, tmp_path):
     await plugin._check_all()
 
     changed_a = HTML.replace("非流式", "流式")
+
     async def _fake(url):
         return changed_a if "example.com/a" in url else HTML2
 
@@ -1632,24 +1752,23 @@ async def test_multi_doc_both_changed_merge_into_one_summary(monkeypatch, tmp_pa
     assert "文档 2" in prompt  # 两篇分别编号列出
 
 
-async def test_multi_doc_distinct_targets_summarize_independently(monkeypatch, tmp_path):
+async def test_multi_doc_distinct_targets_summarize_independently(
+    monkeypatch, tmp_path
+):
     """文档集不同的监控项各自独立总结，不会把别的组的文档混进来。"""
     other = {
         "id": "other",
         "name": "另一组",
-        "documents": [
-            {"url": "https://example.com/c", "selector": ".markdown-body"}
-        ],
+        "documents": [{"url": "https://example.com/c", "selector": ".markdown-body"}],
         "enabled": True,
         "sessions": ["fake:GroupMessage:2"],
     }
-    plugin, ctx = make_plugin(
-        monkeypatch, tmp_path, {"targets": [MULTI_TARGET, other]}
-    )
+    plugin, ctx = make_plugin(monkeypatch, tmp_path, {"targets": [MULTI_TARGET, other]})
     html_c = (
         "<html><body><main class='markdown-body'>"
         "<h1>配套文档</h1><p>旧内容</p></main></body></html>"
     )
+
     async def _fake(url):
         return (
             html_c
@@ -1665,6 +1784,7 @@ async def test_multi_doc_distinct_targets_summarize_independently(monkeypatch, t
     # 第二次：改 A（属 MULTI_TARGET）与 C（属 other）
     changed_a = HTML.replace("非流式", "流式")
     changed_c = html_c.replace("旧内容", "新内容")
+
     async def _fake(url):
         return (
             changed_c
@@ -1768,11 +1888,7 @@ async def test_api_save_targets_requires_documents(monkeypatch, tmp_path):
 
     resp = await _call_api(
         plugin,
-        {
-            "targets": [
-                {**TARGET, "documents": [{"url": "https://example.com/doc"}]}
-            ]
-        },
+        {"targets": [{**TARGET, "documents": [{"url": "https://example.com/doc"}]}]},
     )
     assert json.loads(resp.body.decode())["saved"] is True
 

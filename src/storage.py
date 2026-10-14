@@ -165,10 +165,10 @@ def archive(
     folder = history_dir / safe_name(str(target.get("id") or "target"))
     folder.mkdir(parents=True, exist_ok=True)
     # 文件名带微秒：秒级精度会让同一秒内的多次变更互相覆盖
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S-%f")
     (folder / f"{stamp}.md").write_text(
         f"# {target.get('name') or target.get('id')}\n\n"
-        f"- 时间: {datetime.now():%Y-%m-%d %H:%M:%S}\n"
+        f"- 时间: {datetime.now().astimezone():%Y-%m-%d %H:%M:%S}\n"
         f"{persona_note}\n"
         f"## AI 总结\n\n{summary}\n\n"
         f"## 变化文档（{len(docs)} 篇）\n\n{doc_blocks}",

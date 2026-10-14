@@ -79,7 +79,9 @@ def get_provider(context: Context, provider_id: str):
     return context.get_using_provider()
 
 
-async def summarize(provider, target: dict, changed_docs: list[dict], persona_prompt: str = "") -> str:
+async def summarize(
+    provider, target: dict, changed_docs: list[dict], persona_prompt: str = ""
+) -> str:
     """调用 LLM 总结若干变化文档。
 
     Args:
@@ -171,8 +173,7 @@ async def summarize_with_agent(
             f"地址：{d.get('url')}\n\n{d.get('diff') or ''}"
         )
     doc_list = "；".join(
-        f"#{i + 1} {d.get('name') or d.get('url')}"
-        for i, d in enumerate(changed_docs)
+        f"#{i + 1} {d.get('name') or d.get('url')}" for i, d in enumerate(changed_docs)
     )
     prompt = (
         f"监控项：{target.get('name') or target.get('id')}\n\n"
