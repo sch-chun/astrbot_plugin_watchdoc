@@ -11,7 +11,7 @@ from astrbot.api import logger
 from astrbot.api.star import Context
 
 from .constants import MAX_HISTORY_PER_TARGET
-from .text import safe_name
+from .text import build_doc_slug_map, safe_name
 
 
 async def append_to_history(
@@ -127,9 +127,12 @@ def drop_snapshots(
             continue
         # 监控项保留但文档可能减少：裁掉不再监控的文档快照
         cur = next((c for c in current if str(c.get("id") or "") == tid), None)
-        kept_slugs = {
-            safe_name(str(d.get("url") or "")) for d in (cur.get("documents") or [])
-        }
+        cur_urls = [
+            str(d.get("url") or "").strip()
+            for d in (cur.get("documents") or [])
+            if str(d.get("url") or "").strip()
+        ]
+        kept_slugs = set(build_doc_slug_map(cur_urls).values())
         doc_dir = snapshot_dir / safe_name(tid)
         if doc_dir.is_dir():
             for f in doc_dir.glob("*.md"):

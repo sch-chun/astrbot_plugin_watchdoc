@@ -1303,6 +1303,87 @@ def test_safe_name_rejects_path_traversal():
     assert text.safe_name("") == "target"
 
 
+def test_build_doc_slug_map_single_url_equals_safe_name():
+    """单 URL 场景等价于 {url: safe_name(url)}，旧文件名保持不变。"""
+    u = "https://example.com/doc"
+    assert text.build_doc_slug_map([u]) == {u: text.safe_name(u)}
+
+
+def test_build_doc_slug_map_keeps_safe_name_when_no_collision():
+    """未撞名的 URL 保持原 safe_name，旧基线文件不受影响。"""
+    a = "https://example.com/alpha"
+    b = "https://example.com/beta"
+    m = text.build_doc_slug_map([a, b])
+    assert m[a] == text.safe_name(a)
+    assert m[b] == text.safe_name(b)
+
+
+def test_build_doc_slug_map_disambiguates_colliding(monkeypatch):
+    """safe_name 落到同一基线名时追加短哈希去重，保证单射（不依赖截断方向）。"""
+    monkeypatch.setattr(text, "safe_name", lambda u: "same_base")
+    m = text.build_doc_slug_map(["https://x.com/a", "https://x.com/b"])
+    assert m["https://x.com/a"] != m["https://x.com/b"]
+    assert m["https://x.com/a"].startswith("same_base_")
+    assert len(set(m.values())) == 2  # 单射
+
+
+def test_build_doc_slug_map_ignores_empty_and_dedup():
+    """空串忽略、重复合并，结果仍单射。"""
+    assert text.build_doc_slug_map(["", " ", "https://x.com/a", "https://x.com/a"]) == {
+        "https://x.com/a": text.safe_name("https://x.com/a")
+    }
+
+
+def test_build_doc_slug_map_residual_collision_raises(monkeypatch):
+    """去重后仍冲突（理论上不可能）必须报错，而不是静默覆盖。
+
+    强制 safe_name 撞名 + _doc_hash 恒等，模拟「去重也救不回来」的极端情形，
+    验证函数会抛 ValueError 而非静默覆盖（与截断方向无关）。
+    """
+    monkeypatch.setattr(text, "safe_name", lambda u: "same_base")
+    monkeypatch.setattr(text, "_doc_hash", lambda u: "deadbeef")
+    with pytest.raises(ValueError):
+        text.build_doc_slug_map(["https://x.com/a", "https://x.com/b"])
+
+
+async def test_colliding_urls_get_distinct_snapshots(monkeypatch, tmp_path):
+    """前 64 字符相同的 URL 不再共用一个基线槽位（v0.1.9 修复回归）。
+
+    复刻用户遇到的「voice-cloning-upload*」撞名：两个 safe_name[:64] 完全相同的
+    URL 在旧实现里会共用一个文件、互相覆盖、每轮循环误报；修复后各占一个槽位。
+    """
+    common = "https://example.com/" + "a" * 50
+    target = {
+        "id": "demo",
+        "name": "撞名文档",
+        "documents": [
+            {"url": common + "diffA", "selector": "", "name": "A"},
+            {"url": common + "diffB", "selector": "", "name": "B"},
+        ],
+        "enabled": True,
+    }
+    plugin, ctx = make_plugin(monkeypatch, tmp_path, {"targets": [target]})
+
+    async def _fake_fetch(url):
+        # 两篇返回不同正文，便于断言各自槽位没被对方覆盖
+        return HTML2 if url.endswith("diffB") else HTML
+
+    monkeypatch.setattr(plugin, "_fetch", _fake_fetch)
+
+    await plugin._check_all()  # 第一次建基线
+    await plugin._check_all()  # 第二次比对：内容没变，不应误报
+
+    doc_dir = plugin.snapshot_dir / text.safe_name("demo")
+    md_files = sorted(doc_dir.glob("*.md"))
+    # 两篇各占一个槽位（旧实现会只剩 1 个文件）
+    assert len(md_files) == 2, [f.name for f in md_files]
+    contents = [f.read_text(encoding="utf-8") for f in md_files]
+    # 两篇正文分别落进各自的文件，没有被对方覆盖（内容互不相同）
+    assert len(set(contents)) == 2
+    # 第二次检测无变化，不触发 AI 总结（不白烧 token）
+    assert ctx.provider.calls == []
+
+
 async def test_format_list_reports_missing_baseline(monkeypatch, tmp_path):
     """清单里应区分「已建立基线」与「尚未建立基线」。"""
     plugin, _ = make_plugin(monkeypatch, tmp_path, {"targets": [TARGET]})
