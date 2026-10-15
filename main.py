@@ -35,7 +35,7 @@ from .src.constants import (
     TARGETS_KEY,
     TOOL_READ_DEFAULT_LINES,
 )
-from .src.text import digest, make_diff, normalize, safe_name
+from .src.text import build_doc_slug_map, digest, make_diff, normalize, safe_name
 
 NO_RUN_MESSAGE = "当前没有正在处理的文档变更。"
 
@@ -248,11 +248,16 @@ class WatchdocPlugin(Star):
 
         doc_dir = self.snapshot_dir / safe_name(tid)
         changed: list[dict] = []
+        # 同 target 内文档快照名必须单射：前 64 字符相同的 URL 会因截断撞名、
+        # 共用一个基线槽位并循环误报，故按整组 URL 统一去重（撞名追加短哈希）。
+        slug_map = build_doc_slug_map(
+            [str(doc.get("url") or "").strip() for doc in docs]
+        )
         for doc in docs:
             url = str(doc.get("url") or "").strip()
             if not url:
                 continue
-            slug = safe_name(url)
+            slug = slug_map[url]
             html = await self._fetch(url)
             # bs4 与 markitdown 都是同步阻塞的，放进线程避免卡住事件循环。
             # 归一化同理：ignore_patterns 是用户填的正则，长文本上灾难性回溯会
