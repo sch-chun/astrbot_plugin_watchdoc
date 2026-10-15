@@ -30,6 +30,7 @@ from .src.constants import (
     CRON_NAME_PREFIX,
     DEFAULT_AGENT_STEPS,
     DEFAULT_CRON,
+    DEFAULT_HISTORY_ROUNDS,
     PLUGIN_NAME,
     TARGETS_KEY,
     TOOL_READ_DEFAULT_LINES,
@@ -37,6 +38,47 @@ from .src.constants import (
 from .src.text import digest, make_diff, normalize, safe_name
 
 NO_RUN_MESSAGE = "当前没有正在处理的文档变更。"
+
+
+def _history_role(msg) -> str:
+    """取一条对话消息的角色，兼容 dict（AstrBot 落盘）与对象（部分接口返回）。"""
+    if isinstance(msg, dict):
+        return str(msg.get("role") or "").strip().lower()
+    return str(getattr(msg, "role", "") or "").strip().lower()
+
+
+def _history_content(msg):
+    """取一条对话消息的内容，兼容 dict 与对象两种形态。"""
+    if isinstance(msg, dict):
+        return msg.get("content")
+    return getattr(msg, "content", None)
+
+
+def _message_text(content) -> str:
+    """把消息内容归一化成纯文本。
+
+    AstrBot 对话库里 content 可能是字符串，也可能是多模态组件列表
+    （每项含 type=text 或 image_url 等）。只抽取文本部分。
+
+    Args:
+        content: 消息内容，字符串或组件列表。
+
+    Returns:
+        纯文本；无法提取时返回空串。
+    """
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part for part in parts if part).strip()
+    return ""
 
 
 class WatchdocPlugin(Star):
@@ -171,6 +213,24 @@ class WatchdocPlugin(Star):
             return [{"url": url, "selector": str(target.get("selector") or "")}]
         return []
 
+    def _iter_target_umos(self, target: dict) -> list[str]:
+        """取监控项要推送的会话列表（去重、去空、保持顺序）。
+
+        Args:
+            target: 监控项配置。
+
+        Returns:
+            会话标识列表。
+        """
+        umos = [str(item).strip() for item in target.get("sessions") or []]
+        seen: set[str] = set()
+        result: list[str] = []
+        for item in umos:
+            if item and item not in seen:
+                seen.add(item)
+                result.append(item)
+        return result
+
     async def _check_one(self, target: dict) -> None:
         """检查单个监控项，发现变化时把变化的文档一起总结并推送。
 
@@ -261,9 +321,34 @@ class WatchdocPlugin(Star):
         # 同一次检测里变化的文档合并进同一份总结
         change = {"docs": changed}
         deliveries = []
-        for group in await self._group_sessions_by_persona(target):
-            summary_text = await self._make_summary(target, change, group)
-            deliveries.append((summary_text, group["umos"]))
+        raw = self.config.get("history_rounds")
+        rounds = int(raw) if raw is not None else DEFAULT_HISTORY_ROUNDS
+        if rounds != 0:
+            # 参考会话对话历史（>0=最近 N 轮；-1=全部）：历史是会话私有的、无法跨
+            # 会话共享，只能逐会话单独总结（人格相同也不再共用）——代价是 token 翻倍。
+            use_persona = bool(self.config.get("use_session_persona", True))
+            for umo in self._iter_target_umos(target):
+                persona = await self._resolve_persona(umo) if use_persona else None
+                group = {
+                    "umos": [umo],
+                    "prompt": (persona or {}).get("prompt") or "",
+                    "tools": (persona or {}).get("tools", None),
+                }
+                try:
+                    history_text = await self._read_session_history(umo, rounds)
+                except Exception as exc:  # noqa: BLE001
+                    # 单会话历史读不到不能拖垮其余会话，也不影响本次变更总结
+                    logger.error(f"[watchdoc] 读取 {umo} 会话历史失败: {exc}")
+                    history_text = ""
+                summary_text = await self._make_summary(
+                    target, change, group, history_text
+                )
+                deliveries.append((summary_text, [umo]))
+        else:
+            # 关闭历史参考：按人格分组，人格相同的会话共用一份总结（token 最省）
+            for group in await self._group_sessions_by_persona(target):
+                summary_text = await self._make_summary(target, change, group)
+                deliveries.append((summary_text, group["umos"]))
 
         self._archive(target, change, deliveries)
         await self._notify(target, deliveries)
@@ -443,27 +528,30 @@ class WatchdocPlugin(Star):
         )
         return normalize(text, patterns)
 
-    async def _make_summary(self, target: dict, change: dict, group: dict) -> str:
+    async def _make_summary(
+        self, target: dict, change: dict, group: dict, history: str = ""
+    ) -> str:
         """生成一份总结，按配置决定走单次调用还是 agent 循环。
 
         Args:
             target: 监控项配置。
             change: 含 before / after / diff 的变更数据。
             group: 人格分组。
+            history: 推送会话最近的对话历史，非空时追加到 prompt 末尾。
 
         Returns:
             总结文本。
         """
         if self.config.get("agent_mode", False) and group["umos"]:
             try:
-                return await self._summarize_with_agent(target, change, group)
+                return await self._summarize_with_agent(target, change, group, history)
             except Exception as exc:  # noqa: BLE001
                 # agent 跑挂不能吞掉这次变更，退回单次调用保证仍有总结
                 logger.error(f"[watchdoc] agent 总结失败，退回单次调用: {exc}")
-        return await self._summarize(target, change["docs"], group["prompt"])
+        return await self._summarize(target, change["docs"], group["prompt"], history)
 
     async def _summarize_with_agent(
-        self, target: dict, change: dict, group: dict
+        self, target: dict, change: dict, group: dict, history: str = ""
     ) -> str:
         """用 agent 循环生成总结，模型可自行调用工具查阅原文。
 
@@ -471,6 +559,7 @@ class WatchdocPlugin(Star):
             target: 监控项配置。
             change: 含 before / after / diff 的变更数据。
             group: 人格分组。
+            history: 推送会话最近的对话历史，非空时追加到 prompt 末尾。
 
         Returns:
             总结文本。
@@ -491,6 +580,7 @@ class WatchdocPlugin(Star):
                 provider_id,
                 self._build_tool_set(group["tools"]),
                 max_steps,
+                history,
             )
         finally:
             self._runs.pop(umo, None)
@@ -630,7 +720,11 @@ class WatchdocPlugin(Star):
         return f"未找到指定的文档：{doc}。可用文档：{self._doc_list(run)}"
 
     async def _summarize(
-        self, target: dict, changed_docs: list[dict], persona_prompt: str = ""
+        self,
+        target: dict,
+        changed_docs: list[dict],
+        persona_prompt: str = "",
+        history: str = "",
     ) -> str:
         """调用 LLM 总结若干变化文档。
 
@@ -638,12 +732,13 @@ class WatchdocPlugin(Star):
             target: 监控项配置。
             changed_docs: 本次变化的文档列表，每项含 name/url/diff。
             persona_prompt: 会话人格的 system prompt。
+            history: 推送会话最近的对话历史，非空时追加到 prompt 末尾。
 
         Returns:
             总结文本。
         """
         return await summary.summarize(
-            self._get_provider(), target, changed_docs, persona_prompt
+            self._get_provider(), target, changed_docs, persona_prompt, history
         )
 
     def _get_provider(self):
@@ -734,6 +829,48 @@ class WatchdocPlugin(Star):
 
         if not pushed:
             logger.warning(f"[watchdoc] 未配置推送会话，结果仅落盘：{title}")
+
+    async def _read_session_history(self, umo: str, rounds: int) -> str:
+        """读取会话最近的对话历史，供总结时参考。
+
+        从 AstrBot 对话库取该会话当前对话的消息，转成
+        「用户 / 助手」文本。放在总结 prompt 末尾，使稳定的文档 diff
+        前缀能多命中提示缓存（跨会话共享）。
+
+        Args:
+            umo: 会话标识。
+            rounds: 历史轮数。0=关闭（返回空串）；-1=不限制（取全部对话）；
+                >0=取最近 N 轮（每轮约 2 条消息，即最近 2N 条）。
+
+        Returns:
+            历史文本；无历史或读不到时返回空串。
+        """
+        manager = self.context.conversation_manager
+        if manager is None:
+            return ""
+        if rounds == 0:
+            return ""
+        cid = await manager.get_curr_conversation_id(umo)
+        if not cid:
+            return ""
+        conv = await self.context.get_db().get_conversation_by_id(cid=cid)
+        content = list((getattr(conv, "content", None) if conv else None) or [])
+        if not content:
+            return ""
+        # rounds > 0：取末尾 rounds 轮（常见交替下即 2×rounds 条消息）；
+        # rounds < 0（-1=不限制）：取全部对话历史。
+        recent = content if rounds < 0 else content[-(rounds * 2) :]
+        lines = []
+        for msg in recent:
+            role = _history_role(msg)
+            if role == "system":
+                continue
+            text = _message_text(_history_content(msg))
+            if not text:
+                continue
+            label = "用户" if role == "user" else "助手"
+            lines.append(f"{label}：{text}")
+        return "\n".join(lines)
 
     async def _append_history(self, umo: str, title: str, url: str, text: str) -> None:
         """把推送正文追加到会话的对话历史。

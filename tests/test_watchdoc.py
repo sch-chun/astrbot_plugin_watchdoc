@@ -1902,3 +1902,195 @@ async def test_api_save_targets_rejects_doc_without_url(monkeypatch, tmp_path):
     )
     assert resp.status_code == 400
     assert ctx.kv.puts == []
+
+
+async def test_history_rounds_positive_appends_session_history_to_prompt(
+    monkeypatch, tmp_path
+):
+    """history_rounds 为正数时，总结 prompt 末尾携带该会话历史。"""
+    umo = "fake:GroupMessage:1"
+    history = [
+        {"role": "user", "content": "用户：之前在讨论部署流程"},
+        {"role": "assistant", "content": "助手：建议用蓝绿发布"},
+    ]
+    manager = FakeConversationManager(
+        current={umo: "cid-1"}, histories={"cid-1": history}
+    )
+    plugin, ctx = make_plugin(
+        monkeypatch,
+        tmp_path,
+        {"history_rounds": 2, "targets": [TARGET]},
+        conversations=[FakeConversation(umo, "fake")],
+        conversation_manager=manager,
+    )
+    patch_fetch(monkeypatch, plugin, HTML)
+    await plugin._check_all()
+    patch_fetch(monkeypatch, plugin, HTML.replace("非流式", "流式"))
+    await plugin._check_all()
+
+    assert len(ctx.provider.calls) == 1
+    prompt = ctx.provider.calls[0]
+    # 历史块出现在 prompt 末尾：稳定前缀（文档 diff + 任务指令）在前，利于提示缓存
+    assert "以下是该推送会话最近的对话历史" in prompt
+    assert "之前在讨论部署流程" in prompt
+    assert prompt.strip().endswith("助手：建议用蓝绿发布")
+    # 历史位于任务指令（稳定前缀）之后，而不是插在中间破坏前缀
+    assert prompt.rfind("之前在讨论部署流程") > prompt.find("对调用方的影响")
+
+
+async def test_history_rounds_zero_disables_history(monkeypatch, tmp_path):
+    """history_rounds=0（关闭）时，prompt 不含会话历史块（行为不变）。"""
+    umo = "fake:GroupMessage:1"
+    history = [{"role": "user", "content": "用户：之前在讨论部署流程"}]
+    manager = FakeConversationManager(
+        current={umo: "cid-1"}, histories={"cid-1": history}
+    )
+    plugin, ctx = make_plugin(
+        monkeypatch,
+        tmp_path,
+        {"history_rounds": 0, "targets": [TARGET]},
+        conversations=[FakeConversation(umo, "fake")],
+        conversation_manager=manager,
+    )
+    patch_fetch(monkeypatch, plugin, HTML)
+    await plugin._check_all()
+    patch_fetch(monkeypatch, plugin, HTML.replace("非流式", "流式"))
+    await plugin._check_all()
+
+    assert len(ctx.provider.calls) == 1
+    assert "以下是该推送会话最近的对话历史" not in ctx.provider.calls[0]
+
+
+async def test_history_rounds_positive_summarizes_each_session_separately(
+    monkeypatch, tmp_path
+):
+    """同人格的多个会话，history_rounds 为正数时各自单独总结（不再共用一份）。"""
+    target = {**TARGET, "sessions": ["a:GroupMessage:1", "b:GroupMessage:2"]}
+    history_a = [{"role": "user", "content": "用户A：之前在讨论 X"}]
+    history_b = [{"role": "user", "content": "用户B：之前在讨论 Y"}]
+    manager = FakeConversationManager(
+        current={"a:GroupMessage:1": "cid-a", "b:GroupMessage:2": "cid-b"},
+        histories={"cid-a": history_a, "cid-b": history_b},
+    )
+    persona = FakePersonaManager(
+        {"a:GroupMessage:1": "人格甲", "b:GroupMessage:2": "人格甲"}
+    )
+    plugin, ctx = make_plugin(
+        monkeypatch,
+        tmp_path,
+        {"history_rounds": 2, "targets": [target]},
+        conversations=[
+            FakeConversation("a:GroupMessage:1", "a"),
+            FakeConversation("b:GroupMessage:2", "b"),
+        ],
+        persona_manager=persona,
+        conversation_manager=manager,
+    )
+    patch_fetch(monkeypatch, plugin, HTML)
+    await plugin._check_all()
+    patch_fetch(monkeypatch, plugin, HTML.replace("非流式", "流式"))
+    await plugin._check_all()
+
+    # 两会话同人格：不开历史会共用 1 份，开了历史各自 1 份 → 2 次 LLM 调用
+    assert len(ctx.provider.calls) == 2
+    # 两份总结各自只带自己会话的历史，互不串味（顺序与 sessions 一致）
+    assert "之前在讨论 X" in ctx.provider.calls[0]
+    assert "之前在讨论 Y" in ctx.provider.calls[1]
+    assert "之前在讨论 Y" not in ctx.provider.calls[0]
+    assert "之前在讨论 X" not in ctx.provider.calls[1]
+    assert sorted(session for session, _ in ctx.sent) == [
+        "a:GroupMessage:1",
+        "b:GroupMessage:2",
+    ]
+
+
+async def test_history_rounds_positive_empty_when_no_conversation(
+    monkeypatch, tmp_path
+):
+    """会话无对话历史时，history_rounds 为正数也不报错，照常生成不含历史的总结。"""
+    umo = "fake:GroupMessage:1"
+    # 管理器在位但查不到该会话的当前对话 → 历史为空串
+    manager = FakeConversationManager(current={}, histories={})
+    plugin, ctx = make_plugin(
+        monkeypatch,
+        tmp_path,
+        {"history_rounds": 2, "targets": [TARGET]},
+        conversations=[FakeConversation(umo, "fake")],
+        conversation_manager=manager,
+    )
+    patch_fetch(monkeypatch, plugin, HTML)
+    await plugin._check_all()
+    patch_fetch(monkeypatch, plugin, HTML.replace("非流式", "流式"))
+    await plugin._check_all()
+
+    assert len(ctx.provider.calls) == 1
+    assert "以下是该推送会话最近的对话历史" not in ctx.provider.calls[0]
+
+
+async def test_history_rounds_negative_unlimited_appends_all_history(
+    monkeypatch, tmp_path
+):
+    """history_rounds=-1 不限制轮数，取全部对话历史（不被按轮数截断）。"""
+    umo = "fake:GroupMessage:1"
+    # 6 轮（12 条），远超任何合理 N；-1 应全取而非按 2N 截断
+    history = []
+    for i in range(6):
+        history.append({"role": "user", "content": f"用户：第{i}轮问题"})
+        history.append({"role": "assistant", "content": f"助手：第{i}轮回答"})
+    manager = FakeConversationManager(
+        current={umo: "cid-1"}, histories={"cid-1": history}
+    )
+    plugin, ctx = make_plugin(
+        monkeypatch,
+        tmp_path,
+        {"history_rounds": -1, "targets": [TARGET]},
+        conversations=[FakeConversation(umo, "fake")],
+        conversation_manager=manager,
+    )
+    patch_fetch(monkeypatch, plugin, HTML)
+    await plugin._check_all()
+    patch_fetch(monkeypatch, plugin, HTML.replace("非流式", "流式"))
+    await plugin._check_all()
+
+    assert len(ctx.provider.calls) == 1
+    prompt = ctx.provider.calls[0]
+    assert "以下是该推送会话最近的对话历史" in prompt
+    # 首轮与末轮都在，说明没有被按轮数截断
+    assert "第0轮问题" in prompt
+    assert "第5轮回答" in prompt
+
+
+async def test_use_session_persona_off_blocks_injection_when_history_on(
+    monkeypatch, tmp_path
+):
+    """use_session_persona=false + history_rounds>0：历史照常、但人格不被注入。
+
+    会话本身配有人格（FakePersonaManager 能解析出「人格甲」），开关关闭时即便
+    走了逐会话历史分支，也不应把会话人格注入 system prompt——与开关语义、文档
+    一致：关闭后所有会话共用一份不含人格的总结。
+    """
+    umo = "fake:GroupMessage:1"
+    history = [{"role": "user", "content": "用户：之前在讨论部署流程"}]
+    manager = FakeConversationManager(
+        current={umo: "cid-1"}, histories={"cid-1": history}
+    )
+    persona = FakePersonaManager({umo: "人格甲"})
+    plugin, ctx = make_plugin(
+        monkeypatch,
+        tmp_path,
+        {"use_session_persona": False, "history_rounds": 2, "targets": [TARGET]},
+        conversations=[FakeConversation(umo, "fake")],
+        persona_manager=persona,
+        conversation_manager=manager,
+    )
+    patch_fetch(monkeypatch, plugin, HTML)
+    await plugin._check_all()
+    patch_fetch(monkeypatch, plugin, HTML.replace("非流式", "流式"))
+    await plugin._check_all()
+
+    # 逐会话历史分支被触发：1 次 LLM 调用，且 prompt 末尾带该会话历史
+    assert len(ctx.provider.calls) == 1
+    assert "以下是该推送会话最近的对话历史" in ctx.provider.calls[0]
+    # 但人格未被注入：system prompt 回落到无人格的 ROLE_PROMPT
+    assert ctx.provider.system_prompts[0] == ROLE_PROMPT
+    assert "人格甲" not in ctx.provider.system_prompts[0]

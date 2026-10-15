@@ -6,7 +6,7 @@
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A54.24.0-blueviolet)](https://github.com/AstrBotDevs/AstrBot)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-v0.1.8-green)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.1.9-green)](CHANGELOG.md)
 
 ---
 
@@ -43,6 +43,8 @@
 ```
 
 首次检查只建立基线，不会调用模型，也不会推送。
+
+配置 `history_rounds` 不为 0（正整数或 `-1`）后，总结会把该推送会话最近的对话历史附在 prompt 末尾，让模型理解上下文；代价是每会话必须单独生成一份总结（人格相同的会话不再共用），Token 消耗可能翻倍。详见下方「配置项」。
 
 ---
 
@@ -105,6 +107,7 @@ https://github.com/sch-chun/astrbot_plugin_watchdoc
 | `use_session_persona` | `true` | 按推送会话的人格生成总结；人格相同的会话共用一份 |
 | `agent_mode` | `false` | 用 Agent 循环做总结，模型可自行调用人格允许的工具并查阅变更前后原文 |
 | `agent_max_steps` | `16` | Agent 最大轮次。设为 16 及以上时，AstrBot 会在用到 80% / 90% / 95% 时提前追加收尾提醒 |
+| `history_rounds` | `0` | 总结时参考的会话对话历史轮数：`0`=关闭（按人格分组共用一份总结）；`-1`=不限制（取全部对话）；`>0`=取最近 N 轮（每轮约一条用户 + 一条助手，即最近 2N 条），附在 prompt 末尾以多命中提示缓存前缀 |
 | `ignore_patterns` | `[]` | 全局忽略规则（正则），在归一化阶段从文本中删除匹配内容 |
 
 每个监控项还可以单独写一条**任务指令**，随 diff 一起送给模型；留空则回落到内置默认指令（「总结变化 / 对调用方的影响 / 需做的调整」）。
@@ -135,7 +138,7 @@ https://github.com/sch-chun/astrbot_plugin_watchdoc
 ## 开发
 
 ```bash
-pytest -q            # 108 条用例，全部离线，不依赖网络
+pytest -q            # 113 条用例，全部离线，不依赖网络
 ruff format . && ruff check .
 ```
 
