@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.9] - 2026-10-15
+
+### Added
+
+- **总结时参考推送会话的对话历史**：新增配置 `history_rounds`（int，默认 `0`）。`0`=关闭（按人格分组共用一份总结）；`-1`=不限制轮数（取全部对话）；`>0`=取最近 N 轮（每轮约含一条用户与一条助手消息，即取最近 2N 条消息）。开启（非 0）后，总结会把该推送会话的对话历史（转成「用户 / 助手」文本）附在 user 轮**末尾**，让模型理解上下文、产出更贴合的总结；历史放在 prompt 末尾是为让稳定的文档 diff + 任务指令前缀多命中提示缓存（跨会话共享）。
+- **逐会话单独总结**：开启历史参考（非 0）后，历史是会话私有的、无法跨会话共享，因此即使人格相同的会话也不再共用一份总结，而是逐会话生成——代价是 Token 消耗可能翻倍（配置项 hint 已注明）。关闭（`0`）时行为不变：仍按人格分组、相同人格共用一份。
+
 ## [0.1.8] - 2026-10-14
 
 ### Added

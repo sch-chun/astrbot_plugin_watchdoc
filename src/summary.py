@@ -80,7 +80,11 @@ def get_provider(context: Context, provider_id: str):
 
 
 async def summarize(
-    provider, target: dict, changed_docs: list[dict], persona_prompt: str = ""
+    provider,
+    target: dict,
+    changed_docs: list[dict],
+    persona_prompt: str = "",
+    history: str = "",
 ) -> str:
     """调用 LLM 总结若干变化文档。
 
@@ -89,6 +93,8 @@ async def summarize(
         target: 监控项配置。
         changed_docs: 本次变化的文档列表，每项含 name/url/diff。
         persona_prompt: 会话人格的 system prompt，非空时追加到系统提示。
+        history: 推送会话最近的对话历史，非空时追加到 user 轮末尾，
+            放在结尾能让稳定的文档 diff 前缀多命中提示缓存。
 
     Returns:
         总结文本。调用失败时返回带说明的原文片段。
@@ -114,6 +120,13 @@ async def summarize(
         + "\n\n".join(parts)
         + f"\n\n{task_instruction(target)}"
     )
+    if history:
+        # 会话历史放在 user 轮最末：上面的文档 diff + 任务指令是稳定前缀，
+        # 跨会话多命中提示缓存；历史本身随会话不同，不影响前缀缓存。
+        prompt += (
+            "\n\n以下是该推送会话最近的对话历史，仅供你理解上下文，"
+            "不要把它当作本次文档变更的一部分：\n\n" + history
+        )
     system_prompt = _system_prompt(persona_prompt)
     try:
         resp = await provider.text_chat(
@@ -137,6 +150,7 @@ async def summarize_with_agent(
     provider_id: str,
     tools: ToolSet,
     max_steps: int,
+    history: str = "",
 ) -> str:
     """用 agent 循环生成总结，模型可自行调用工具查阅原文。
 
@@ -148,6 +162,7 @@ async def summarize_with_agent(
         provider_id: 模型 ID。
         tools: 可用工具集。
         max_steps: 最大工具调用轮次。
+        history: 推送会话最近的对话历史，非空时追加到 user 轮末尾。
 
     Returns:
         总结文本。
@@ -186,6 +201,12 @@ async def summarize_with_agent(
         f"或用 {DOC_TOOL_NAMES[1]} 在指定文档中搜索关键词。\n"
         f"可用文档：{doc_list}"
     )
+    if history:
+        # 与单次调用一致：历史放 user 轮最末，固定文档前缀多命中提示缓存
+        prompt += (
+            "\n\n以下是该推送会话最近的对话历史，仅供你理解上下文，"
+            "不要把它当作本次文档变更的一部分：\n\n" + history
+        )
     system_prompt = _system_prompt(group["prompt"])
 
     resp = await context.tool_loop_agent(
