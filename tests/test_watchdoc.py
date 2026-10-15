@@ -131,6 +131,19 @@ class FakeEvent:
         self.unified_msg_origin = umo
 
 
+class FakeCommandEvent:
+    """构造 /watchdoc 指令事件：提供 message_str 与 plain_result。
+
+    真实事件 plain_result 返回消息链；测试直接返回文本，便于对回复做断言。
+    """
+
+    def __init__(self, message_str):
+        self.message_str = message_str
+
+    def plain_result(self, text):
+        return text
+
+
 def make_tool(name, active=True):
     tool = FunctionTool(
         name=name,
@@ -1347,7 +1360,7 @@ def test_build_doc_slug_map_residual_collision_raises(monkeypatch):
 
 
 async def test_colliding_urls_get_distinct_snapshots(monkeypatch, tmp_path):
-    """前 64 字符相同的 URL 不再共用一个基线槽位（v0.1.9 修复回归）。
+    """前 64 字符相同的 URL 不再共用一个基线槽位（v0.1.10 修复回归）。
 
     复刻用户遇到的「voice-cloning-upload*」撞名：两个 safe_name[:64] 完全相同的
     URL 在旧实现里会共用一个文件、互相覆盖、每轮循环误报；修复后各占一个槽位。
@@ -2175,3 +2188,107 @@ async def test_use_session_persona_off_blocks_injection_when_history_on(
     # 但人格未被注入：system prompt 回落到无人格的 ROLE_PROMPT
     assert ctx.provider.system_prompts[0] == ROLE_PROMPT
     assert "人格甲" not in ctx.provider.system_prompts[0]
+
+
+# ---------------------------------------------------------------------------
+# /watchdoc reset 指令（v0.1.10 P2 修复）
+# ---------------------------------------------------------------------------
+
+
+async def _run_watchdoc(plugin, message_str):
+    """跑一次 /watchdoc 指令并收集所有 plain_result 文本。"""
+    event = FakeCommandEvent(message_str)
+    return [r async for r in plugin._cmd_watchdoc(event)]
+
+
+async def test_reset_by_url_deletes_correct_doc_baseline(monkeypatch, tmp_path):
+    """reset <url> 删的是 target 子目录里按 slug_map 解析出的那篇（P2 核心）。
+
+    旧实现去平铺目录找 safe_name(token).md，而真实基线在
+    snapshot_dir / safe_name(tid) / {slug}.md，所以永远 miss。这里既验证删对了
+    文件、也验证没误删同项目下另一篇，并确认旧平铺路径不被新逻辑触碰。
+    """
+    docs = [
+        {"url": "https://example.com/alpha", "selector": "", "name": "A"},
+        {"url": "https://example.com/beta", "selector": "", "name": "B"},
+    ]
+    plugin, _ = make_plugin(
+        monkeypatch, tmp_path, {"targets": [{"id": "demo", "documents": docs}]}
+    )
+    slug_map = text.build_doc_slug_map([d["url"] for d in docs])
+    doc_dir = plugin.snapshot_dir / text.safe_name("demo")
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / f"{slug_map['https://example.com/alpha']}.md").write_text("alpha")
+    (doc_dir / f"{slug_map['https://example.com/beta']}.md").write_text("beta")
+    # 故意留一个旧平铺路径：它和子目录里的文件同名但位置不同，证明新逻辑不会误删它
+    stale_flat = (
+        plugin.snapshot_dir / f"{text.safe_name('https://example.com/alpha')}.md"
+    )
+    stale_flat.write_text("stale flat")
+
+    results = await _run_watchdoc(plugin, "/watchdoc reset https://example.com/alpha")
+
+    assert any("已重置" in r for r in results)
+    assert not (doc_dir / f"{slug_map['https://example.com/alpha']}.md").exists()
+    assert (doc_dir / f"{slug_map['https://example.com/beta']}.md").exists()
+    # 旧平铺文件应原样保留——新逻辑根本不去那里找，也不会顺手删
+    assert stale_flat.exists()
+
+
+async def test_reset_by_url_disambiguates_colliding_pair(monkeypatch, tmp_path):
+    """撞名两页：reset 其中一篇只删那一篇，绝不误删另一篇（slug_map 区分）。"""
+    common = "https://example.com/" + "a" * 50
+    docs = [
+        {"url": common + "diffA", "selector": "", "name": "A"},
+        {"url": common + "diffB", "selector": "", "name": "B"},
+    ]
+    plugin, _ = make_plugin(
+        monkeypatch, tmp_path, {"targets": [{"id": "demo", "documents": docs}]}
+    )
+    slug_map = text.build_doc_slug_map([d["url"] for d in docs])
+    doc_dir = plugin.snapshot_dir / text.safe_name("demo")
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / f"{slug_map[common + 'diffA']}.md").write_text("A")
+    (doc_dir / f"{slug_map[common + 'diffB']}.md").write_text("B")
+
+    await _run_watchdoc(plugin, f"/watchdoc reset {common}diffA")
+
+    assert not (doc_dir / f"{slug_map[common + 'diffA']}.md").exists()
+    assert (doc_dir / f"{slug_map[common + 'diffB']}.md").exists()
+
+
+async def test_reset_by_id_clears_all_doc_baselines(monkeypatch, tmp_path):
+    """reset <id> 重置整个监控项：删掉该 target 子目录下全部文档基线。"""
+    docs = [
+        {"url": "https://example.com/alpha", "selector": "", "name": "A"},
+        {"url": "https://example.com/beta", "selector": "", "name": "B"},
+    ]
+    plugin, _ = make_plugin(
+        monkeypatch, tmp_path, {"targets": [{"id": "demo", "documents": docs}]}
+    )
+    doc_dir = plugin.snapshot_dir / text.safe_name("demo")
+    doc_dir.mkdir(parents=True, exist_ok=True)
+    (doc_dir / "alpha.md").write_text("a")
+    (doc_dir / "beta.md").write_text("b")
+
+    results = await _run_watchdoc(plugin, "/watchdoc reset demo")
+
+    assert any("全部 2 个文档基线" in r for r in results)
+    assert not (doc_dir / "alpha.md").exists()
+    assert not (doc_dir / "beta.md").exists()
+
+
+async def test_reset_unknown_url_reports_not_found(monkeypatch, tmp_path):
+    """reset 一个不存在的 URL 明确报「未找到」，而不是走旧平铺路径永远 miss。"""
+    plugin, _ = make_plugin(
+        monkeypatch,
+        tmp_path,
+        {
+            "targets": [
+                {"id": "demo", "documents": [{"url": "https://example.com/alpha"}]}
+            ]
+        },
+    )
+    results = await _run_watchdoc(plugin, "/watchdoc reset https://example.com/nope")
+
+    assert any("未找到" in r for r in results)

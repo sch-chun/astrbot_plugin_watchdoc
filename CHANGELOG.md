@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 ### Fixed
 
 - **前 64 字符相同的 URL 循环误报「有变化」**：`safe_name` 原按 `[:64]` 从头截断，同站点 URL 差异几乎都在路径末尾，导致多页被切成同一快照文件名、共用一个基线槽位——每轮检测按顺序逐篇抓比写，A 页内容覆盖 B 页基线、下轮又被覆盖回去，表现成「两页内容整体对调」且每次都判变化、每 6 小时白烧一次 AI 总结 token，diff 还会错位挂在另一页名下。`safe_name` 改为**从末尾截断**（保留最具区分度的路径后缀），并新增 `build_doc_slug_map`：同一监控项内按整组 URL 统一去重，撞名时给每个追加 `_` + URL 短哈希，仍冲突（理论不可能）则抛 `ValueError` 而非静默覆盖；`_check_one` 与 `drop_snapshots` 共用同一映射，避免清理裁错文件。旧基线文件因文件名变更会静默重建一次（缺失基线不报变化、不烧 token），开发阶段可接受。
+- **`/watchdoc reset` 指令静默失效（P2）**：`reset` 仍在平铺目录找 `safe_name(token).md`，而文档基线实际落在 `snapshot_dir / safe_name(tid) / {slug}.md`——不仅路径差一层目录，传入的 `args[2]`（URL）还被当成 `tid` 用了，于是 `/watchdoc reset <url>` 恒返回「未找到基线快照」、等于坏指令。改为 `reset` 同时接受**监控项 id**（重置该项下全部文档基线）与**文档 URL**（只重置那一篇）：URL 场景用 `build_doc_slug_map` 正确解析 slug，删的是 `target` 子目录里对应那篇；id 场景删掉整个 `target` 子目录。未知 URL 明确报「未找到」，不再走旧平铺路径永远 miss（与 P0-1「链路断死还不报错」同类毛病）。
+- **`build_doc_slug_map` 报错信息难看（P3）**：撞名去重残余冲突时 `raise ValueError` 的 `", ".join(result)` 把 **完整 URL（dict 的 key）** 拼成一长串，既难看也没用；改为 `join(result.values())`（拼 slug），直接暴露冲突的快照名。
+- **注释版本号写反（P3）**：`build_doc_slug_map` 与撞名回归测试的注释写成「见 v0.1.9 此修复」，但该修复属 v0.1.10；统一更正为 v0.1.10。
 
 ## [0.1.9] - 2026-10-15
 

@@ -93,7 +93,7 @@ def build_doc_slug_map(urls: list[str]) -> dict[str, str]:
 
     同一监控项（doc_dir）内的文档快照以文件名为键，必须单射——否则前 64 字符
     相同的 URL 会共用一个基线槽位，互相覆盖并循环误报「有变化」、白烧 AI 总结
-    token（见 v0.1.9 此修复）。
+    token（见 v0.1.10 此修复）。
 
     基线名取 ``safe_name(url)``（已截断到 64）。若多个 URL 落到同一基线名，则给每个
     追加 ``_`` + URL 短哈希去重；未冲突的 URL 保持原基线名，其旧基线文件不受影响
@@ -120,7 +120,8 @@ def build_doc_slug_map(urls: list[str]) -> dict[str, str]:
                 result[u] = f"{base}_{_doc_hash(u)}"
     if len(set(result.values())) != len(result):
         raise ValueError(
-            "文档快照名去重后仍冲突，请检查 build_doc_slug_map：" + ", ".join(result)
+            "文档快照名去重后仍冲突，请检查 build_doc_slug_map 的 slug："
+            + ", ".join(result.values())
         )
     return result
 

@@ -925,7 +925,10 @@ class WatchdocPlugin(Star):
 
     @filter.command("watchdoc")
     async def _cmd_watchdoc(self, event: AstrMessageEvent):
-        """Watchdoc 指令。用法：/watchdoc [check|list|reset <id>|probe <url>]"""
+        """Watchdoc 指令。用法：/watchdoc [check|list|reset <id|url>|probe <url>]
+
+        reset 接受监控项 id（重置该项下全部文档基线）或文档 URL（只重置那一篇）。
+        """
         args = event.message_str.strip().split()
         sub = args[1] if len(args) > 1 else "check"
 
@@ -942,14 +945,58 @@ class WatchdocPlugin(Star):
             return
 
         if sub == "reset" and len(args) > 2:
-            snap = self.snapshot_dir / f"{safe_name(args[2])}.md"
-            if snap.exists():
-                snap.unlink()
+            token = args[2].strip()
+            targets = await self._load_targets()
+            # reset 接受「监控项 id」（重置该项下全部文档基线）或「文档 URL」
+            # （只重置那一篇）。文档基线实际落在 snapshot_dir / safe_name(tid)
+            # / {slug}.md，必须用 build_doc_slug_map 解析 slug，不能像旧实现那样去
+            # 平铺目录找 safe_name(token).md——否则永远 miss（见 v0.1.10 P2 修复）。
+            by_id = next((t for t in targets if str(t.get("id") or "") == token), None)
+            if by_id is not None:
+                tid = str(by_id.get("id") or "")
+                doc_dir = self.snapshot_dir / safe_name(tid)
+                removed = 0
+                if doc_dir.is_dir():
+                    for f in doc_dir.glob("*.md"):
+                        f.unlink(missing_ok=True)
+                        removed += 1
+                # 兼容旧版单文件基线
+                (self.snapshot_dir / f"{safe_name(tid)}.md").unlink(missing_ok=True)
+                if removed:
+                    yield event.plain_result(
+                        f"已重置监控项 {tid} 的全部 {removed} 个文档基线，"
+                        f"下次检查将重新建立。"
+                    )
+                else:
+                    yield event.plain_result(f"监控项 {tid} 没有已建立的基线快照。")
+                return
+
+            # token 视为文档 URL：在所有含该 URL 的监控项里清掉对应文档基线
+            removed: list[tuple[str, str]] = []
+            for t in targets:
+                tid = str(t.get("id") or "")
+                docs = [
+                    str(d.get("url") or "").strip()
+                    for d in (t.get("documents") or [])
+                    if str(d.get("url") or "").strip()
+                ]
+                if token not in docs:
+                    continue
+                slug = build_doc_slug_map(docs)[token]
+                snap = self.snapshot_dir / safe_name(tid) / f"{slug}.md"
+                if snap.exists():
+                    snap.unlink()
+                    removed.append((tid, token))
+            if removed:
+                lines = "\n".join(f"- [{tid}] {url}" for tid, url in removed)
                 yield event.plain_result(
-                    f"已重置 {args[2]} 的基线，下次检查将重新建立。"
+                    "已重置以下文档的基线，下次检查将重新建立：\n" + lines
                 )
             else:
-                yield event.plain_result(f"未找到 {args[2]} 的基线快照。")
+                yield event.plain_result(
+                    f"未找到 {token} 对应的基线快照"
+                    f"（检查 URL 是否匹配某监控项下的文档）。"
+                )
             return
 
         yield event.plain_result("开始检查文档变更，结果将推送到配置的目标会话。")
