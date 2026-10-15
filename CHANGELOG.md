@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.10] - 2026-10-16
+
+### Fixed
+
+- **前 64 字符相同的 URL 循环误报「有变化」**：`safe_name` 原按 `[:64]` 从头截断，同站点 URL 差异几乎都在路径末尾，导致多页被切成同一快照文件名、共用一个基线槽位——每轮检测按顺序逐篇抓比写，A 页内容覆盖 B 页基线、下轮又被覆盖回去，表现成「两页内容整体对调」且每次都判变化、每 6 小时白烧一次 AI 总结 token，diff 还会错位挂在另一页名下。`safe_name` 改为**从末尾截断**（保留最具区分度的路径后缀），并新增 `build_doc_slug_map`：同一监控项内按整组 URL 统一去重，撞名时给每个追加 `_` + URL 短哈希，仍冲突（理论不可能）则抛 `ValueError` 而非静默覆盖；`_check_one` 与 `drop_snapshots` 共用同一映射，避免清理裁错文件。旧基线文件因文件名变更会静默重建一次（缺失基线不报变化、不烧 token），开发阶段可接受。
+
 ## [0.1.9] - 2026-10-15
 
 ### Added
