@@ -356,7 +356,7 @@ class WatchdocPlugin(Star):
                 deliveries.append((summary_text, group["umos"]))
 
         self._archive(target, change, deliveries)
-        await self._notify(target, deliveries)
+        await self._notify(target, change, deliveries)
         logger.info(
             f"[watchdoc] {tid} 检测到 {len(changed)} 篇文档变更并已推送"
             f"（{len(deliveries)} 份总结）"
@@ -799,21 +799,27 @@ class WatchdocPlugin(Star):
         )
 
     async def _notify(
-        self, target: dict, deliveries: list[tuple[str, list[str]]]
+        self, target: dict, change: dict, deliveries: list[tuple[str, list[str]]]
     ) -> None:
         """把变更总结推送到监控项配置的会话。
 
         Args:
             target: 监控项配置。
+            change: 含本次变化文档（before/after/diff）的变更数据。
             deliveries: (总结, 会话列表) 的列表。
         """
         title = target.get("name") or target.get("id")
-        # 列出本次监控的文档地址；兼容旧版单 url
-        doc_lines = (
-            "\n".join(f"- {d.get('url')}" for d in (target.get("documents") or []))
-            or target.get("url")
-            or ""
-        )
+        # 只列本次真正变化的文档地址，不再罗列监控项全部链接（P2 修复 v0.1.11）：
+        # 否则十几个链接的监控项只变了 1-2 篇，推送开头也会被塞一堆无关 URL。
+        # change["docs"] 为空时 _check_one 已提前返回、不会走到这里，必有变化文档。
+        seen: set[str] = set()
+        changed_urls: list[str] = []
+        for d in change.get("docs") or []:
+            url = str(d.get("url") or "").strip()
+            if url and url not in seen:
+                seen.add(url)
+                changed_urls.append(url)
+        doc_lines = "\n".join(f"- {u}" for u in changed_urls)
         pushed = False
         for summary_text, umos in deliveries:
             if not umos:

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.11] - 2026-10-16
+
+### Fixed
+
+- **推送开头罗列监控项全部链接（P2）**：`_notify` 原遍历 `target["documents"]`（整组链接）拼到推送文本开头，导致一个监控项下十几篇文档只变了 1-2 篇，推送开头也被塞一堆无关 URL，既喧宾夺主又掩盖真正变化的文档。`_notify` 现改为只遍历 `change["docs"]`（本次真正变化的文档）、去重后列出变化 URL；`_check_one` 在 `change["docs"]` 为空时早已提前返回、不会走到推送环节，故此处必有变化文档。新增回归测试 `test_notify_lists_only_changed_doc_urls` 锁定该行为（多文档监控项仅部分变化时，推送文本只含变化 URL、不含未变化 URL）。
+
 ## [0.1.10] - 2026-10-16
 
 ### Fixed
