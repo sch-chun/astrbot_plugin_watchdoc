@@ -155,7 +155,7 @@ class WatchdocPlugin(Star):
             name=CRON_JOB_NAME,
             cron_expression=str(self.config.get("cron", DEFAULT_CRON)),
             handler=self._check_all,
-            description="Watchdoc 定时检查 · 由插件托管，改动将在重载后按配置重置",
+            description="Watchdoc 定时检查 · 由插件托管，请勿手动修改。若被改动将在插件重载后按配置重置",
             enabled=enabled,
         )
         logger.info("[watchdoc] 定时检查任务已注册")
