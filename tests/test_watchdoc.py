@@ -680,10 +680,63 @@ async def test_notify_keeps_going_when_one_session_fails(monkeypatch, tmp_path):
     monkeypatch.setattr(plugin.context, "send_message", flaky)
 
     await plugin._notify(
-        target, [("变更摘要", ["bad:GroupMessage:1", "good:GroupMessage:2"])]
+        target,
+        {"docs": []},
+        [("变更摘要", ["bad:GroupMessage:1", "good:GroupMessage:2"])],
     )
 
     assert [session for session, _ in ctx.sent] == ["good:GroupMessage:2"]
+
+
+async def test_notify_lists_only_changed_doc_urls(monkeypatch, tmp_path):
+    """多文档监控项只变了其中几篇时，推送开头只列变化 URL，不罗列全部链接。
+
+    回归 v0.1.11：之前 _notify 遍历 target["documents"]（整组），导致一个监控项
+    下十几个链接只变了 1-2 篇，推送开头也会被塞一堆无关 URL。修复后只列
+    change["docs"] 里真正变化的文档地址。
+    """
+    target = {
+        "id": "multi",
+        "name": "多文档示例",
+        "documents": [
+            {"url": "https://example.com/a", "selector": ".mk", "name": "文档A"},
+            {"url": "https://example.com/b", "selector": ".mk", "name": "文档B"},
+            {"url": "https://example.com/c", "selector": ".mk", "name": "文档C"},
+            {"url": "https://example.com/d", "selector": ".mk", "name": "文档D"},
+        ],
+        "sessions": ["x:GroupMessage:1"],
+    }
+    plugin, ctx = make_plugin(monkeypatch, tmp_path, {"targets": [target]})
+    # 本组 4 篇，仅 b、d 变化
+    change = {
+        "docs": [
+            {
+                "url": "https://example.com/b",
+                "name": "文档B",
+                "before": "旧",
+                "after": "新",
+                "diff": "+ 新",
+            },
+            {
+                "url": "https://example.com/d",
+                "name": "文档D",
+                "before": "旧",
+                "after": "新",
+                "diff": "+ 新",
+            },
+        ]
+    }
+    deliveries = [("变更摘要", ["x:GroupMessage:1"])]
+    await plugin._notify(target, change, deliveries)
+
+    assert len(ctx.sent) == 1
+    text = str(ctx.sent[0][1].chain[0])
+    # 变化的 b、d 必须出现
+    assert "https://example.com/b" in text
+    assert "https://example.com/d" in text
+    # 未变化的 a、c 绝不应出现在推送文本里
+    assert "https://example.com/a" not in text
+    assert "https://example.com/c" not in text
 
 
 ROLE_PROMPT = "你是 API 文档变更分析助手。"
