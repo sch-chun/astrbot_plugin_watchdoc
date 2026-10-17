@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.12] - 2026-10-16
+
+### Added
+
+- **配置页背景图**：照搬 TTS Enhancer 的方案，给 Watchdoc 配置页加可配置背景图，未抓取文档时界面不再空荡。`_conf_schema.json` 新增三项（`page_background` 类型为 `file`、dashboard 自带上传控件；`page_background_opacity` 0~1 滑杆；`page_background_blur` 0~30 滑杆）。后端新增 `GET /astrbot_plugin_watchdoc/page-background`（纯函数 `_build_page_background_response` 读图并以 base64 Data URL 内联返回，路径锁定在插件数据目录内防穿越）；前端 `pages/designer` 加全屏 `#page-bg` 层（`#page-bg-img` 默认透明、0.6s 淡入），`body` 改透明、`.preview-host` 半透明以透出背景；`app.js` 新增 `applyPageBackground()` 并在初始化时调用。未配置背景图时返回空 `data_url`，前端不渲染背景、保持默认主题底色。
+
 ## [0.1.11] - 2026-10-16
 
 ### Fixed

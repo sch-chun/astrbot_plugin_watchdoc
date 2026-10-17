@@ -1233,6 +1233,29 @@ async function loadTargets() {
   renderList();
 }
 
+// 配置页背景图：仅当配置了背景图时才注入并淡入；未配置则保持默认主题底色。
+// 与 TTS Enhancer 同款实现：预加载图片、解码完成后再提升透明度，避免半图闪烁。
+async function applyPageBackground() {
+  try {
+    const result = await bridge.apiGet("page-background");
+    const data = result?.data || result;
+    if (!data || !data.data_url) return;
+    const img = document.getElementById("page-bg-img");
+    if (!img) return;
+    const opacity = String(data.opacity ?? 1);
+    const blur = Number(data.blur ?? 0);
+    const preload = new Image();
+    preload.onload = () => {
+      img.style.backgroundImage = `url("${data.data_url}")`;
+      img.style.filter = blur > 0 ? `blur(${blur}px)` : "none";
+      img.style.opacity = opacity;
+    };
+    preload.src = data.data_url;
+  } catch (e) {
+    console.warn("加载背景图失败:", e);
+  }
+}
+
 // data-booting 让整页 opacity:0，摘不掉就什么都看不见——比看到未加载状态更糟。
 // bridge.ready() 若既不 resolve 也不 reject，try/catch 两个分支都不会走到，
 // 所以单独挂一个超时，保证页面一定露出来
@@ -1251,6 +1274,7 @@ try {
   resetPage();
   // 兜底已经把页面露出来了，就别再用空状态盖掉那行超时提示
   if (!bootTimedOut) document.documentElement.removeAttribute("data-booting");
+  applyPageBackground();
   await Promise.all([loadTargets(), loadSessions()]);
 } catch (error) {
   clearTimeout(bootTimer);

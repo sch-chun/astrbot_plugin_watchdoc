@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <!-- 配置页背景层：仅在配置了背景图时由 JS 注入图片 + 透明度/模糊度；默认仅显示主题底色，不显空 -->
+    <div id="page-bg"><div id="page-bg-img"></div></div>
     <header class="bar">
       <input id="url" type="text" placeholder="输入文档地址，例如 https://docs.example.com/api" />
       <button id="fetch" class="primary">抓取</button>
