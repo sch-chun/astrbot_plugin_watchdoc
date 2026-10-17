@@ -53,7 +53,7 @@
   "page_background_opacity": {
     "description": "背景图不透明度",
     "type": "float",
-    "default": 0.5,
+    "default": 0.2,
     "slider": {
       "min": 0,
       "max": 1,
