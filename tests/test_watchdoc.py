@@ -2345,3 +2345,43 @@ async def test_reset_unknown_url_reports_not_found(monkeypatch, tmp_path):
     results = await _run_watchdoc(plugin, "/watchdoc reset https://example.com/nope")
 
     assert any("未找到" in r for r in results)
+
+
+# --- 配置页背景图（与 TTS Enhancer 同款实现） ---
+
+
+def test_page_background_empty_when_not_configured(tmp_path):
+    """未配置背景图时返回空 data_url，前端不渲染背景。"""
+    data_dir = tmp_path
+    assert main_mod._build_page_background_response(None, data_dir) == {
+        "code": 0,
+        "data": {"data_url": "", "opacity": 1.0, "blur": 0},
+    }
+    cfg = {}
+    assert (
+        main_mod._build_page_background_response(cfg, data_dir)["data"]["data_url"]
+        == ""
+    )
+
+
+def test_page_background_returns_data_url_and_params(tmp_path):
+    """配置了存在的图片时返回 base64 data_url，并带上透明度/模糊度。"""
+    img = tmp_path / "bg.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n fake-png-bytes")
+    cfg = {
+        "page_background": ["bg.png"],
+        "page_background_opacity": 0.3,
+        "page_background_blur": 12,
+    }
+    resp = main_mod._build_page_background_response(cfg, tmp_path)
+    assert resp["code"] == 0
+    assert resp["data"]["data_url"].startswith("data:image/png;base64,")
+    assert resp["data"]["opacity"] == 0.3
+    assert resp["data"]["blur"] == 12
+
+
+def test_page_background_blocks_path_traversal(tmp_path):
+    """路径穿越应被拦截：相对路径跳出插件数据目录时返回空 data_url。"""
+    cfg = {"page_background": ["../secret.txt"]}
+    resp = main_mod._build_page_background_response(cfg, tmp_path)
+    assert resp["data"]["data_url"] == ""

@@ -28,12 +28,34 @@
   box-sizing: border-box;
 }
 
+/* 全屏背景层：无图时显示主题底色（与旧 body 背景一致，保持观感），
+   有图时由 JS 注入图片并淡入，填充空状态（如未抓取文档时的预览区）。
+   放在 body 之后、内容之前，z-index 负一层，内容浮于其上 */
+#page-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--bg);
+}
+
+#page-bg-img {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-color: transparent;
+  opacity: 0;
+  transition: opacity 0.6s ease;
+  will-change: opacity;
+}
+
 body {
   margin: 0;
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: transparent;
   color: var(--text);
   font: 13px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -170,7 +192,9 @@ body.resizing {
 .preview-host {
   flex: 1;
   overflow: auto;
-  background: var(--bg);
+  /* 半透明：未配背景图时背后的 #page-bg 底色同为 --bg，视觉等同于不透明；
+     配了背景图后透出约 30%，让空预览区不再空荡（不变更文档渲染时的可读性） */
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
   /* 抓取渲染完成后淡入，消除大文档同步建 shadow DOM 时的整块重绘闪烁 */
   transition: opacity 0.25s ease;
 }

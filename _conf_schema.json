@@ -42,5 +42,34 @@
     "type": "list",
     "default": [],
     "hint": "在归一化阶段从文本中删除匹配内容。仅在确认页面存在动态噪音时添加"
+  },
+  "page_background": {
+    "description": "配置页背景图",
+    "type": "file",
+    "file_types": ["png", "jpg", "jpeg", "webp"],
+    "default": [],
+    "hint": "为 Watchdoc 配置页设置背景图；留空则不显示背景。仅支持单张图片，建议控制在数 MB 内，过大将拖慢页面加载"
+  },
+  "page_background_opacity": {
+    "description": "背景图不透明度",
+    "type": "float",
+    "default": 0.5,
+    "slider": {
+      "min": 0,
+      "max": 1,
+      "step": 0.05
+    },
+    "hint": "背景图的不透明度（0 完全透明，1 完全不透明）；仅在配置了背景图时生效"
+  },
+  "page_background_blur": {
+    "description": "背景图模糊度",
+    "type": "int",
+    "default": 0,
+    "slider": {
+      "min": 0,
+      "max": 30,
+      "step": 1
+    },
+    "hint": "背景图的模糊半径（像素）；仅在配置了背景图时生效"
   }
 }

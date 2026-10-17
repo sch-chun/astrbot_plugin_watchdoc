@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import mimetypes
 from pathlib import Path
 
 from astrbot.api import AstrBotConfig, logger
@@ -38,6 +40,54 @@ from .src.constants import (
 from .src.text import build_doc_slug_map, digest, make_diff, normalize, safe_name
 
 NO_RUN_MESSAGE = "当前没有正在处理的文档变更。"
+
+
+def _build_page_background_response(config, data_dir) -> dict:
+    """构造配置页背景图响应数据（纯函数，便于单测）。
+
+    仅当配置了背景图且文件可读时返回 data_url；否则 data_url 为空，前端不渲染背景。
+    图片以 base64 Data URL 返回，避免二进制穿桥与跨域/外链，保持离线可用。
+    路径解析后强制锁定在插件数据目录内，防止路径穿越。
+
+    Args:
+        config: 插件配置（AstrBotConfig 或 dict），可为 None。
+        data_dir: 插件数据目录（Path 或等价字符串）。
+
+    Returns:
+        包含 data_url / opacity / blur 的响应 dict（尚未包裹 JSONResponse）。
+    """
+    empty = {"code": 0, "data": {"data_url": "", "opacity": 1.0, "blur": 0}}
+    if config is None:
+        return empty
+    background_files = config.get("page_background") or []
+    if not isinstance(background_files, list) or not background_files:
+        return empty
+
+    rel_path = background_files[0]
+    if not isinstance(rel_path, str) or not rel_path:
+        return empty
+
+    # 锁定在插件数据目录内，防止路径穿越
+    base = Path(data_dir).resolve()
+    target = (base / rel_path).resolve()
+    if target != base and base not in target.parents:
+        return empty
+
+    if not target.is_file():
+        return empty
+
+    try:
+        raw = target.read_bytes()
+    except OSError:
+        return empty
+
+    mime, _ = mimetypes.guess_type(target.name)
+    if not mime:
+        mime = "application/octet-stream"
+    data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+    opacity = config.get("page_background_opacity", 0.5)
+    blur = config.get("page_background_blur", 0)
+    return {"code": 0, "data": {"data_url": data_url, "opacity": opacity, "blur": blur}}
 
 
 def _history_role(msg) -> str:
@@ -112,6 +162,12 @@ class WatchdocPlugin(Star):
         )
         self.context.register_web_api(
             f"/{PLUGIN_NAME}/sessions", self._api_sessions, ["GET"], "列出已知会话"
+        )
+        self.context.register_web_api(
+            f"/{PLUGIN_NAME}/page-background",
+            self._api_page_background,
+            ["GET"],
+            "获取配置页背景图",
         )
 
     async def initialize(self) -> None:
@@ -463,6 +519,12 @@ class WatchdocPlugin(Star):
         await self._sync_cron_job()
         storage.drop_snapshots(self.snapshot_dir, previous, cleaned)
         return json_response({"saved": True, "count": len(cleaned)})
+
+    async def _api_page_background(self):
+        """配置页背景图：未配置时返回空 data_url，前端不渲染背景。"""
+        return json_response(
+            _build_page_background_response(self.config, self.data_dir)
+        )
 
     async def _api_sessions(self):
         """列出 AstrBot 已知的会话，供 Page 选择推送目标。
