@@ -9,6 +9,12 @@
   --warn: #ba7517;
   --warn-soft: #faeeda;
   --danger: #a32d2d;
+
+  /* 边框 / 表单：毛玻璃（半透明底色 + 模糊透出背景图）。
+     两个底色变量控制不透明度（百分比越小越透），--glass-blur 控制模糊 */
+  --glass-bg: color-mix(in srgb, var(--bg) 72%, transparent);
+  --glass-panel-bg: color-mix(in srgb, var(--panel) 50%, transparent);
+  --glass-blur: blur(12px) saturate(140%);
 }
 
 [data-theme="dark"] {
@@ -66,11 +72,21 @@ body {
   align-items: center;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
+  /* 顶栏背景半透明（不磨砂）：回到此前被误降前的 72%，背景图透出使 #url 磨砂生效 */
+  background: var(--glass-bg);
 }
 
 .bar input {
   flex: 1;
   min-width: 0;
+}
+
+/* 输入框自身磨砂：毛玻璃挂在输入框上；顶栏背景半透明(72%)透出背景图，输入框模糊透出之 */
+#url {
+  /* 半透明底色（35%，原 50%）+ 模糊；顶栏半透明使其背后的背景图可被模糊 */
+  background: color-mix(in srgb, var(--panel) 35%, transparent);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 
 input[type="text"] {
@@ -192,9 +208,9 @@ body.resizing {
 .preview-host {
   flex: 1;
   overflow: auto;
-  /* 半透明：未配背景图时背后的 #page-bg 底色同为 --bg，视觉等同于不透明；
-     配了背景图后透出约 30%，让空预览区不再空荡（不变更文档渲染时的可读性） */
-  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  /* 透明：文档预览区透出背景图（不带模糊）；无抓取时整页背景图透出、界面不空，
+     抓取后文档内容自行决定底色 */
+  background: transparent;
   /* 抓取渲染完成后淡入，消除大文档同步建 shadow DOM 时的整块重绘闪烁 */
   transition: opacity 0.25s ease;
 }
@@ -349,6 +365,8 @@ html[data-booting] .layout {
   padding: 8px 14px;
   border-top: 1px solid var(--border);
   color: var(--muted);
+  /* 底栏半透明：透出背景图（不带模糊） */
+  background: var(--glass-bg);
 }
 
 .side {
@@ -357,6 +375,8 @@ html[data-booting] .layout {
   padding: 12px;
   display: flex;
   flex-direction: column;
+  /* 右栏容器：半透明底色（55%，原 72%）透出背景图（不磨砂），仅表单卡片(.panel)自身毛玻璃 */
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
 
 /* 抓取后选择器候选 / 表单面板用 grid 行高 0fr→1fr 展开，把「已配置」列表平滑挤到下方；
@@ -398,6 +418,9 @@ html[data-booting] .layout {
   opacity: 0;
   transform: translateY(10px);
   transition: max-height 0.28s ease, opacity 0.28s ease, transform 0.28s ease;
+  /* 命中内容区半透明（不磨砂）：比其它栏更透（55% vs 72%），透出背景图更明显 */
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  border-top: 1px solid var(--border);
 }
 
 .match-pop.open {
@@ -426,10 +449,13 @@ html[data-booting] .layout {
 }
 
 .panel {
-  background: var(--panel);
+  /* 表单卡片自身磨砂：半透明底色（30%，原 40%） + 模糊透出背景图；卡片即磨砂主体，容器背景不磨砂 */
+  background: color-mix(in srgb, var(--panel) 30%, transparent);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 12px;
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 
 .panel h2 {
@@ -875,4 +901,13 @@ ul {
 
 .add-doc-btn:hover {
   border-color: var(--accent);
+}
+
+/* 右栏表单控件：透出右栏毛玻璃（自身不再挂模糊，避免双重模糊）；
+   让“右侧表单改成磨砂”落到实处——面板毛玻璃 + 控件半透明，而非实心白框 */
+.side input[type="text"],
+.side textarea,
+.side select,
+.side .panel label textarea {
+  background: var(--glass-panel-bg);
 }
