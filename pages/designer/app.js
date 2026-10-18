@@ -1242,7 +1242,7 @@ async function applyPageBackground() {
     if (!data || !data.data_url) return;
     const img = document.getElementById("page-bg-img");
     if (!img) return;
-    const opacity = String(data.opacity ?? 1);
+    const opacity = String(data.opacity ?? 0.2);
     const blur = Number(data.blur ?? 0);
     const preload = new Image();
     preload.onload = () => {

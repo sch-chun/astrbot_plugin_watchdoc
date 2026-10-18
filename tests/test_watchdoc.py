@@ -2380,6 +2380,20 @@ def test_page_background_returns_data_url_and_params(tmp_path):
     assert resp["data"]["blur"] == 12
 
 
+def test_page_background_opacity_default_when_key_missing(tmp_path):
+    """手改 config 或老配置升级时若缺 page_background_opacity 键，应回退到
+    schema 默认值 0.2，而非代码里另一处不一致的 0.5/1.0，否则与 schema 承诺不符。"""
+    img = tmp_path / "bg.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n fake-png-bytes")
+    cfg = {
+        "page_background": ["bg.png"],
+        "page_background_blur": 12,
+    }
+    resp = main_mod._build_page_background_response(cfg, tmp_path)
+    assert resp["code"] == 0
+    assert resp["data"]["opacity"] == 0.2
+
+
 def test_page_background_blocks_path_traversal(tmp_path):
     """路径穿越应被拦截：相对路径跳出插件数据目录时返回空 data_url。"""
     cfg = {"page_background": ["../secret.txt"]}

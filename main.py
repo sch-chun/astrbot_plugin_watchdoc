@@ -85,7 +85,7 @@ def _build_page_background_response(config, data_dir) -> dict:
     if not mime:
         mime = "application/octet-stream"
     data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
-    opacity = config.get("page_background_opacity", 0.5)
+    opacity = config.get("page_background_opacity", 0.2)
     blur = config.get("page_background_blur", 0)
     return {"code": 0, "data": {"data_url": data_url, "opacity": opacity, "blur": blur}}
 
