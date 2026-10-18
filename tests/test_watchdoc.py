@@ -2517,9 +2517,7 @@ class TestPageBackgroundRouteConditionalRequest:
         self, monkeypatch, tmp_path
     ):
         _write_bg(tmp_path)
-        plugin, _ = make_plugin(
-            monkeypatch, tmp_path, {"page_background": ["bg.png"]}
-        )
+        plugin, _ = make_plugin(monkeypatch, tmp_path, {"page_background": ["bg.png"]})
         first = await _call_page_background(plugin)
         etag = first.headers["etag"]
         second = await _call_page_background(plugin, {"If-None-Match": etag})
@@ -2530,9 +2528,7 @@ class TestPageBackgroundRouteConditionalRequest:
     async def test_route_304_does_not_resend_payload(self, monkeypatch, tmp_path):
         """304 响应不得带 body：省流量正是条件请求的目的。"""
         _write_bg(tmp_path)
-        plugin, _ = make_plugin(
-            monkeypatch, tmp_path, {"page_background": ["bg.png"]}
-        )
+        plugin, _ = make_plugin(monkeypatch, tmp_path, {"page_background": ["bg.png"]})
         first = await _call_page_background(plugin)
         second = await _call_page_background(
             plugin, {"If-None-Match": first.headers["etag"]}
