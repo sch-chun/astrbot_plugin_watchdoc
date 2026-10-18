@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.1.13] - 2026-10-18
+
+### Changed
+
+- **背景图接口支持条件请求（ETag 304）**：`GET /astrbot_plugin_watchdoc/page-background` 现按**图片字节与显示参数（opacity / blur）共同**计算 ETag（SHA-256 前 16 位 hex、引号包裹的强验证器），并附加 `Cache-Control: private, no-cache`。浏览器再次进入配置页时自动携带 `If-None-Match`，响应表示未变则服务端返回 304（无 body），已下载的 base64 Data URL 由浏览器 HTTP 缓存透明交给 XHR——大背景图不再每次进入页面全量重传，而 iframe 沙箱禁用 Web Storage/Cache API 的老问题不动一行前端代码即被绕开。更换背景图或调整透明度/模糊度后 ETag 随之变化，不会把旧参数通过 304 继续发给前端。未配置背景图或文件读取失败时不附加缓存头（空响应体积极小，无缓存意义）。纯函数 `_build_page_background_response` 同步改为返回 `(响应 dict, ETag 或 None)` 二元组。
+
 ## [0.1.12] - 2026-10-16
 
 ### Added
