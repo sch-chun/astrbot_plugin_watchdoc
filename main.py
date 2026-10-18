@@ -103,7 +103,10 @@ def _build_page_background_response(config, data_dir) -> tuple[dict, str | None]
         [raw, str(opacity).encode("utf-8"), str(blur).encode("utf-8")]
     )
     etag = f'"{hashlib.sha256(etag_material).hexdigest()[:16]}"'
-    return {"code": 0, "data": {"data_url": data_url, "opacity": opacity, "blur": blur}}, etag
+    return {
+        "code": 0,
+        "data": {"data_url": data_url, "opacity": opacity, "blur": blur},
+    }, etag
 
 
 def _history_role(msg) -> str:
