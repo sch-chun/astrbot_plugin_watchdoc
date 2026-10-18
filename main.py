@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import mimetypes
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from astrbot.api.message_components import Plain
 from astrbot.api.star import Context, Star
 from astrbot.api.web import error_response, json_response, request
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
+from fastapi.responses import Response
 
 from .src import fetch, persona, storage, summary
 from .src.constants import (
@@ -42,44 +44,49 @@ from .src.text import build_doc_slug_map, digest, make_diff, normalize, safe_nam
 NO_RUN_MESSAGE = "当前没有正在处理的文档变更。"
 
 
-def _build_page_background_response(config, data_dir) -> dict:
+def _build_page_background_response(config, data_dir) -> tuple[dict, str | None]:
     """构造配置页背景图响应数据（纯函数，便于单测）。
 
     仅当配置了背景图且文件可读时返回 data_url；否则 data_url 为空，前端不渲染背景。
     图片以 base64 Data URL 返回，避免二进制穿桥与跨域/外链，保持离线可用。
     路径解析后强制锁定在插件数据目录内，防止路径穿越。
 
+    同时按文件字节计算内容 ETag：路由据此应答条件请求，文件未变更时返回 304，
+    浏览器经 HTTP 缓存把已存 base64 透明交给 XHR，大图不再每次进入页面全量重传。
+
     Args:
         config: 插件配置（AstrBotConfig 或 dict），可为 None。
         data_dir: 插件数据目录（Path 或等价字符串）。
 
     Returns:
-        包含 data_url / opacity / blur 的响应 dict（尚未包裹 JSONResponse）。
+        (响应 dict, ETag 或 None) 二元组。响应 dict 含 data_url / opacity / blur，
+        尚未包裹 JSONResponse；未配置背景图或读取失败时 ETag 为 None，
+        路由不附加缓存头（空响应体积极小，无缓存意义）。
     """
     empty = {"code": 0, "data": {"data_url": "", "opacity": 1.0, "blur": 0}}
     if config is None:
-        return empty
+        return empty, None
     background_files = config.get("page_background") or []
     if not isinstance(background_files, list) or not background_files:
-        return empty
+        return empty, None
 
     rel_path = background_files[0]
     if not isinstance(rel_path, str) or not rel_path:
-        return empty
+        return empty, None
 
     # 锁定在插件数据目录内，防止路径穿越
     base = Path(data_dir).resolve()
     target = (base / rel_path).resolve()
     if target != base and base not in target.parents:
-        return empty
+        return empty, None
 
     if not target.is_file():
-        return empty
+        return empty, None
 
     try:
         raw = target.read_bytes()
     except OSError:
-        return empty
+        return empty, None
 
     mime, _ = mimetypes.guess_type(target.name)
     if not mime:
@@ -87,7 +94,8 @@ def _build_page_background_response(config, data_dir) -> dict:
     data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
     opacity = config.get("page_background_opacity", 0.2)
     blur = config.get("page_background_blur", 0)
-    return {"code": 0, "data": {"data_url": data_url, "opacity": opacity, "blur": blur}}
+    etag = f'"{hashlib.sha256(raw).hexdigest()[:16]}"'
+    return {"code": 0, "data": {"data_url": data_url, "opacity": opacity, "blur": blur}}, etag
 
 
 def _history_role(msg) -> str:
@@ -521,10 +529,21 @@ class WatchdocPlugin(Star):
         return json_response({"saved": True, "count": len(cleaned)})
 
     async def _api_page_background(self):
-        """配置页背景图：未配置时返回空 data_url，前端不渲染背景。"""
-        return json_response(
-            _build_page_background_response(self.config, self.data_dir)
-        )
+        """配置页背景图：未配置时返回空 data_url，前端不渲染背景。
+
+        配置了背景图时附加 ETag 与 Cache-Control: private, no-cache：
+        浏览器再次请求自动携带 If-None-Match，文件未变更则返回 304，
+        已存 base64 由 HTTP 缓存透明复用，大图不再每次进入页面全量重传。
+        """
+        payload, etag = _build_page_background_response(self.config, self.data_dir)
+        if not etag:
+            return json_response(payload)
+        cache_headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=cache_headers)
+        response = json_response(payload)
+        response.headers.update(cache_headers)
+        return response
 
     async def _api_sessions(self):
         """列出 AstrBot 已知的会话，供 Page 选择推送目标。
