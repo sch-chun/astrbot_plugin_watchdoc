@@ -5,6 +5,7 @@
 """
 
 import json
+import re
 import threading
 
 import pytest
@@ -14,6 +15,7 @@ from astrbot_plugin_watchdoc import main as main_mod
 from astrbot_plugin_watchdoc.main import WatchdocPlugin
 from astrbot_plugin_watchdoc.src import constants, fetch, summary, text
 from bs4.element import Tag
+from starlette.datastructures import Headers
 
 # 含导航栏噪音（「最后更新」）与正文页面的最小 HTML
 HTML = """<html><body>
@@ -2353,15 +2355,16 @@ async def test_reset_unknown_url_reports_not_found(monkeypatch, tmp_path):
 def test_page_background_empty_when_not_configured(tmp_path):
     """未配置背景图时返回空 data_url，前端不渲染背景。"""
     data_dir = tmp_path
-    assert main_mod._build_page_background_response(None, data_dir) == {
+    resp, etag = main_mod._build_page_background_response(None, data_dir)
+    assert resp == {
         "code": 0,
         "data": {"data_url": "", "opacity": 1.0, "blur": 0},
     }
+    assert etag is None
     cfg = {}
-    assert (
-        main_mod._build_page_background_response(cfg, data_dir)["data"]["data_url"]
-        == ""
-    )
+    resp, etag = main_mod._build_page_background_response(cfg, data_dir)
+    assert resp["data"]["data_url"] == ""
+    assert etag is None
 
 
 def test_page_background_returns_data_url_and_params(tmp_path):
@@ -2373,8 +2376,9 @@ def test_page_background_returns_data_url_and_params(tmp_path):
         "page_background_opacity": 0.3,
         "page_background_blur": 12,
     }
-    resp = main_mod._build_page_background_response(cfg, tmp_path)
+    resp, etag = main_mod._build_page_background_response(cfg, tmp_path)
     assert resp["code"] == 0
+    assert etag is not None
     assert resp["data"]["data_url"].startswith("data:image/png;base64,")
     assert resp["data"]["opacity"] == 0.3
     assert resp["data"]["blur"] == 12
@@ -2389,7 +2393,7 @@ def test_page_background_opacity_default_when_key_missing(tmp_path):
         "page_background": ["bg.png"],
         "page_background_blur": 12,
     }
-    resp = main_mod._build_page_background_response(cfg, tmp_path)
+    resp, _ = main_mod._build_page_background_response(cfg, tmp_path)
     assert resp["code"] == 0
     assert resp["data"]["opacity"] == 0.2
 
@@ -2397,5 +2401,123 @@ def test_page_background_opacity_default_when_key_missing(tmp_path):
 def test_page_background_blocks_path_traversal(tmp_path):
     """路径穿越应被拦截：相对路径跳出插件数据目录时返回空 data_url。"""
     cfg = {"page_background": ["../secret.txt"]}
-    resp = main_mod._build_page_background_response(cfg, tmp_path)
+    resp, etag = main_mod._build_page_background_response(cfg, tmp_path)
     assert resp["data"]["data_url"] == ""
+    assert etag is None
+
+
+class TestEtagForConditionalRequests:
+    """ETag 供路由应答 If-None-Match：内容不变则稳定，内容变则失效。"""
+
+    def test_etag_stable_across_calls(self, tmp_path):
+        f = tmp_path / "bg.png"
+        f.write_bytes(b"\x89PNG\r\n\x1a\nFAKE")
+        cfg = {"page_background": ["bg.png"]}
+        _, etag1 = main_mod._build_page_background_response(cfg, tmp_path)
+        _, etag2 = main_mod._build_page_background_response(cfg, tmp_path)
+        assert etag1 == etag2
+
+    def test_etag_changes_when_file_content_changes(self, tmp_path):
+        f = tmp_path / "bg.png"
+        f.write_bytes(b"\x89PNG-A")
+        cfg = {"page_background": ["bg.png"]}
+        _, etag_before = main_mod._build_page_background_response(cfg, tmp_path)
+        f.write_bytes(b"\x89PNG-B")
+        _, etag_after = main_mod._build_page_background_response(cfg, tmp_path)
+        assert etag_before != etag_after
+
+    def test_etag_is_quoted_hex(self, tmp_path):
+        f = tmp_path / "bg.png"
+        f.write_bytes(b"\x89PNG")
+        cfg = {"page_background": ["bg.png"]}
+        _, etag = main_mod._build_page_background_response(cfg, tmp_path)
+        assert re.fullmatch(r'"[0-9a-f]{16}"', etag)
+
+    def test_etag_none_when_not_configured(self, tmp_path):
+        _, etag = main_mod._build_page_background_response({}, tmp_path)
+        assert etag is None
+
+
+class FakeHeaderRequest:
+    """Web API 请求替身，只提供背景图 handler 用到的 headers。
+
+    用 starlette 的 Headers 而非普通 dict：HTTP 头名大小写不敏感，
+    与生产环境 PluginRequest 包装的真实 Headers 行为一致。
+    """
+
+    def __init__(self, headers=None):
+        self.headers = Headers(headers or {})
+
+
+async def _call_page_background(plugin, headers=None):
+    """在绑好请求上下文的前提下调用背景图接口。"""
+    token = web_mod._request_var.set(FakeHeaderRequest(headers))
+    try:
+        return await plugin._api_page_background()
+    finally:
+        web_mod._request_var.reset(token)
+
+
+def _write_bg(tmp_path):
+    img = tmp_path / constants.PLUGIN_NAME / "bg.png"
+    img.parent.mkdir(parents=True, exist_ok=True)
+    img.write_bytes(b"\x89PNG\r\n\x1a\nROUTE")
+    return img
+
+
+class TestPageBackgroundRouteConditionalRequest:
+    """路由层：ETag/Cache-Control 响应头与 If-None-Match → 304 的端到端行为。"""
+
+    async def test_route_attaches_etag_and_cache_headers(self, monkeypatch, tmp_path):
+        _write_bg(tmp_path)
+        plugin, _ = make_plugin(
+            monkeypatch,
+            tmp_path,
+            {"page_background": ["bg.png"], "page_background_opacity": 0.4},
+        )
+        resp = await _call_page_background(plugin)
+        expected_etag = main_mod._build_page_background_response(
+            plugin.config, plugin.data_dir
+        )[1]
+        assert resp.status_code == 200
+        assert resp.headers["cache-control"] == "private, no-cache"
+        assert resp.headers["etag"] == expected_etag
+        body = json.loads(resp.body)
+        assert body["data"]["data_url"].startswith("data:image/png;base64,")
+
+    async def test_route_returns_304_on_matching_if_none_match(
+        self, monkeypatch, tmp_path
+    ):
+        _write_bg(tmp_path)
+        plugin, _ = make_plugin(
+            monkeypatch, tmp_path, {"page_background": ["bg.png"]}
+        )
+        first = await _call_page_background(plugin)
+        etag = first.headers["etag"]
+        second = await _call_page_background(plugin, {"If-None-Match": etag})
+        assert second.status_code == 304
+        assert second.headers["etag"] == etag
+        assert second.body == b""
+
+    async def test_route_304_does_not_resend_payload(self, monkeypatch, tmp_path):
+        """304 响应不得带 body：省流量正是条件请求的目的。"""
+        _write_bg(tmp_path)
+        plugin, _ = make_plugin(
+            monkeypatch, tmp_path, {"page_background": ["bg.png"]}
+        )
+        first = await _call_page_background(plugin)
+        second = await _call_page_background(
+            plugin, {"If-None-Match": first.headers["etag"]}
+        )
+        assert len(first.body) > 0
+        assert second.body == b""
+
+    async def test_route_omits_cache_headers_when_unconfigured(
+        self, monkeypatch, tmp_path
+    ):
+        plugin, _ = make_plugin(monkeypatch, tmp_path, {})
+        resp = await _call_page_background(plugin)
+        assert resp.status_code == 200
+        assert resp.headers.get("etag") is None
+        assert resp.headers.get("cache-control") is None
+        assert json.loads(resp.body)["data"]["data_url"] == ""
