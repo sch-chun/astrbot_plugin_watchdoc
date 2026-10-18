@@ -62,6 +62,8 @@ def _build_page_background_response(config, data_dir) -> tuple[dict, str | None]
         (响应 dict, ETag 或 None) 二元组。响应 dict 含 data_url / opacity / blur，
         尚未包裹 JSONResponse；未配置背景图或读取失败时 ETag 为 None，
         路由不附加缓存头（空响应体积极小，无缓存意义）。
+        ETag 由图片字节与 opacity / blur 共同哈希：任一变（换图或调显示参数）
+        缓存即失效，避免条件请求把旧参数继续发给前端。
     """
     empty = {"code": 0, "data": {"data_url": "", "opacity": 1.0, "blur": 0}}
     if config is None:
@@ -94,7 +96,13 @@ def _build_page_background_response(config, data_dir) -> tuple[dict, str | None]
     data_url = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
     opacity = config.get("page_background_opacity", 0.2)
     blur = config.get("page_background_blur", 0)
-    etag = f'"{hashlib.sha256(raw).hexdigest()[:16]}"'
+    # ETag 必须覆盖整个响应表示：图片字节 + 显示参数。
+    # 只哈希文件字节时，用户仅调透明度/模糊度（不换图）ETag 不变，
+    # 304 会把旧 opacity/blur 接着发给前端，调整被缓存挡住。
+    etag_material = b"|".join(
+        [raw, str(opacity).encode("utf-8"), str(blur).encode("utf-8")]
+    )
+    etag = f'"{hashlib.sha256(etag_material).hexdigest()[:16]}"'
     return {"code": 0, "data": {"data_url": data_url, "opacity": opacity, "blur": blur}}, etag
 
 
