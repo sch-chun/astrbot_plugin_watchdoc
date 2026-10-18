@@ -2426,6 +2426,34 @@ class TestEtagForConditionalRequests:
         _, etag_after = main_mod._build_page_background_response(cfg, tmp_path)
         assert etag_before != etag_after
 
+    def test_etag_changes_when_opacity_changes(self, tmp_path):
+        """只调透明度不换图：ETag 必须变，否则 304 会把旧透明度发给前端。"""
+        f = tmp_path / "bg.png"
+        f.write_bytes(b"\x89PNG")
+        _, etag_before = main_mod._build_page_background_response(
+            {"page_background": ["bg.png"], "page_background_opacity": 0.2},
+            tmp_path,
+        )
+        _, etag_after = main_mod._build_page_background_response(
+            {"page_background": ["bg.png"], "page_background_opacity": 0.6},
+            tmp_path,
+        )
+        assert etag_before != etag_after
+
+    def test_etag_changes_when_blur_changes(self, tmp_path):
+        """只调模糊度不换图：ETag 同样必须变。"""
+        f = tmp_path / "bg.png"
+        f.write_bytes(b"\x89PNG")
+        _, etag_before = main_mod._build_page_background_response(
+            {"page_background": ["bg.png"], "page_background_blur": 0},
+            tmp_path,
+        )
+        _, etag_after = main_mod._build_page_background_response(
+            {"page_background": ["bg.png"], "page_background_blur": 12},
+            tmp_path,
+        )
+        assert etag_before != etag_after
+
     def test_etag_is_quoted_hex(self, tmp_path):
         f = tmp_path / "bg.png"
         f.write_bytes(b"\x89PNG")
@@ -2521,3 +2549,27 @@ class TestPageBackgroundRouteConditionalRequest:
         assert resp.headers.get("etag") is None
         assert resp.headers.get("cache-control") is None
         assert json.loads(resp.body)["data"]["data_url"] == ""
+
+    async def test_route_serves_new_params_after_opacity_change(
+        self, monkeypatch, tmp_path
+    ):
+        """用户报告的真实场景：调完透明度重进页面，不得被 304 旧响应挡住。
+
+        首次请求拿到 ETag（含旧 opacity）→ 配置改透明度 → 带旧 If-None-Match
+        再请求：ETag 已随参数变化，必须回 200 新值而非 304 旧值。
+        """
+        _write_bg(tmp_path)
+        plugin, _ = make_plugin(
+            monkeypatch,
+            tmp_path,
+            {"page_background": ["bg.png"], "page_background_opacity": 0.2},
+        )
+        first = await _call_page_background(plugin)
+        old_etag = first.headers["etag"]
+
+        plugin.config["page_background_opacity"] = 0.6
+        second = await _call_page_background(plugin, {"If-None-Match": old_etag})
+
+        assert second.status_code == 200
+        assert second.headers["etag"] != old_etag
+        assert json.loads(second.body)["data"]["opacity"] == 0.6
