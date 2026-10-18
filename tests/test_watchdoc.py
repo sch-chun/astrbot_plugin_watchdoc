@@ -2466,6 +2466,43 @@ class TestEtagForConditionalRequests:
         assert etag is None
 
 
+class TestIfNoneMatchParsing:
+    """If-None-Match 解析：按 RFC 7232 弱比较，兼容多值与 W/ 前缀。"""
+
+    def test_missing_header_does_not_match(self):
+        assert main_mod._if_none_match_matches(None, '"abc"') is False
+
+    def test_empty_header_does_not_match(self):
+        assert main_mod._if_none_match_matches("", '"abc"') is False
+
+    def test_exact_match(self):
+        assert main_mod._if_none_match_matches('"abc"', '"abc"') is True
+
+    def test_different_etag_does_not_match(self):
+        assert main_mod._if_none_match_matches('"xyz"', '"abc"') is False
+
+    def test_matches_inside_comma_separated_list(self):
+        """规范允许头为逗号分隔多值：任一项命中即命中。"""
+        inm = '"other", "abc" , "third"'
+        assert main_mod._if_none_match_matches(inm, '"abc"') is True
+
+    def test_no_match_inside_comma_separated_list(self):
+        inm = '"other", "third"'
+        assert main_mod._if_none_match_matches(inm, '"abc"') is False
+
+    def test_matches_weak_validator_prefix(self):
+        """If-None-Match 用弱比较：W/ 前缀的弱验证器与强 ETag 等价。"""
+        assert main_mod._if_none_match_matches('W/"abc"', '"abc"') is True
+
+    def test_weak_validator_inside_list(self):
+        inm = '"other", W/"abc"'
+        assert main_mod._if_none_match_matches(inm, '"abc"') is True
+
+    def test_unquoted_value_does_not_match(self):
+        """etag 恒带引号；未加引号的裸值不得误命中。"""
+        assert main_mod._if_none_match_matches("abc", '"abc"') is False
+
+
 class FakeHeaderRequest:
     """Web API 请求替身，只提供背景图 handler 用到的 headers。
 
@@ -2569,3 +2606,27 @@ class TestPageBackgroundRouteConditionalRequest:
         assert second.status_code == 200
         assert second.headers["etag"] != old_etag
         assert json.loads(second.body)["data"]["opacity"] == 0.6
+
+    async def test_route_returns_304_on_multi_value_if_none_match(
+        self, monkeypatch, tmp_path
+    ):
+        """If-None-Match 可能是逗号分隔多值：任一项含当前 etag 即回 304。"""
+        _write_bg(tmp_path)
+        plugin, _ = make_plugin(monkeypatch, tmp_path, {"page_background": ["bg.png"]})
+        first = await _call_page_background(plugin)
+        etag = first.headers["etag"]
+        second = await _call_page_background(
+            plugin, {"If-None-Match": f'"other-tag", {etag}'}
+        )
+        assert second.status_code == 304
+        assert second.body == b""
+
+    async def test_route_returns_304_on_weak_if_none_match(self, monkeypatch, tmp_path):
+        """If-None-Match 弱比较：W/ 前缀的弱验证器与强 ETag 等价。"""
+        _write_bg(tmp_path)
+        plugin, _ = make_plugin(monkeypatch, tmp_path, {"page_background": ["bg.png"]})
+        first = await _call_page_background(plugin)
+        etag = first.headers["etag"]
+        second = await _call_page_background(plugin, {"If-None-Match": f"W/{etag}"})
+        assert second.status_code == 304
+        assert second.body == b""

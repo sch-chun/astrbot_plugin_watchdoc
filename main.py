@@ -109,6 +109,29 @@ def _build_page_background_response(config, data_dir) -> tuple[dict, str | None]
     }, etag
 
 
+def _if_none_match_matches(if_none_match: str | None, etag: str) -> bool:
+    """按 RFC 7232 弱比较判断 If-None-Match 头是否命中 etag。
+
+    请求头按规范可能是逗号分隔的多值列表，列表项也可带 W/ 弱验证器前缀；
+    If-None-Match 语义上使用弱比较（弱验证器与强验证器等价），逐项剥离
+    W/ 后与 etag 比对，任一项相同即命中。头缺失或全不命中返回 False。
+
+    Args:
+        if_none_match: 请求头 If-None-Match 的值，可为 None。
+        etag: 服务端生成的强 ETag（带引号的十六进制串）。
+
+    Returns:
+        命中返回 True，否则 False。
+    """
+    if not if_none_match:
+        return False
+    for candidate in if_none_match.split(","):
+        candidate = candidate.strip().removeprefix("W/")
+        if candidate == etag:
+            return True
+    return False
+
+
 def _history_role(msg) -> str:
     """取一条对话消息的角色，兼容 dict（AstrBot 落盘）与对象（部分接口返回）。"""
     if isinstance(msg, dict):
@@ -550,7 +573,7 @@ class WatchdocPlugin(Star):
         if not etag:
             return json_response(payload)
         cache_headers = {"ETag": etag, "Cache-Control": "private, no-cache"}
-        if request.headers.get("if-none-match") == etag:
+        if _if_none_match_matches(request.headers.get("if-none-match"), etag):
             return Response(status_code=304, headers=cache_headers)
         response = json_response(payload)
         response.headers.update(cache_headers)
