@@ -39,6 +39,7 @@ from .src.constants import (
     TARGETS_KEY,
     TOOL_READ_DEFAULT_LINES,
 )
+from .src.livingmemory_bridge import LivingMemoryBridge
 from .src.text import build_doc_slug_map, digest, make_diff, normalize, safe_name
 
 NO_RUN_MESSAGE = "当前没有正在处理的文档变更。"
@@ -179,6 +180,7 @@ class WatchdocPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None):
         self.context = context
         self.config = config if config is not None else {}
+        self._lm_bridge = LivingMemoryBridge(self.context)
         self.data_dir = Path(get_astrbot_plugin_data_path()) / PLUGIN_NAME
         self.snapshot_dir = self.data_dir / "snapshots"
         self.history_dir = self.data_dir / "history"
@@ -424,12 +426,15 @@ class WatchdocPlugin(Star):
         # 同一次检测里变化的文档合并进同一份总结
         change = {"docs": changed}
         deliveries = []
+        lm_enabled = bool(self.config.get("use_livingmemory", False))
+        use_persona = bool(self.config.get("use_session_persona", True))
+        if lm_enabled:
+            self._lm_bridge.clear_cache()
         raw = self.config.get("history_rounds")
         rounds = int(raw) if raw is not None else DEFAULT_HISTORY_ROUNDS
         if rounds != 0:
             # 参考会话对话历史（>0=最近 N 轮；-1=全部）：历史是会话私有的、无法跨
             # 会话共享，只能逐会话单独总结（人格相同也不再共用）——代价是 token 翻倍。
-            use_persona = bool(self.config.get("use_session_persona", True))
             for umo in self._iter_target_umos(target):
                 persona = await self._resolve_persona(umo) if use_persona else None
                 group = {
@@ -443,6 +448,17 @@ class WatchdocPlugin(Star):
                     # 单会话历史读不到不能拖垮其余会话，也不影响本次变更总结
                     logger.error(f"[watchdoc] 读取 {umo} 会话历史失败: {exc}")
                     history_text = ""
+                if lm_enabled:
+                    memory_text = await self._lm_bridge.recall_into_history(
+                        target=target,
+                        changed_docs=change["docs"],
+                        umo=umo,
+                        use_persona=use_persona,
+                        history_on=True,
+                        group_umos=[umo],
+                    )
+                    if memory_text:
+                        history_text = (memory_text + "\n" + history_text).strip()
                 summary_text = await self._make_summary(
                     target, change, group, history_text
                 )
@@ -450,7 +466,20 @@ class WatchdocPlugin(Star):
         else:
             # 关闭历史参考：按人格分组，人格相同的会话共用一份总结（token 最省）
             for group in await self._group_sessions_by_persona(target):
-                summary_text = await self._make_summary(target, change, group)
+                history_text = ""
+                if lm_enabled:
+                    memory_text = await self._lm_bridge.recall_into_history(
+                        target=target,
+                        changed_docs=change["docs"],
+                        umo=(group["umos"][0] if group["umos"] else ""),
+                        use_persona=use_persona,
+                        history_on=False,
+                        group_umos=group["umos"],
+                    )
+                    history_text = memory_text
+                summary_text = await self._make_summary(
+                    target, change, group, history_text
+                )
                 deliveries.append((summary_text, group["umos"]))
 
         self._archive(target, change, deliveries)

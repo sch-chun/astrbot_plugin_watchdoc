@@ -1,0 +1,293 @@
+"""Watchdoc ↔ LivingMemory 桥接：总结时召回长期记忆作为上下文。
+
+设计约束（与 LivingMemory 集成约定）：
+- 仅依赖 AstrBot 公共 API 与 LivingMemory 运行时实例（经 Context.get_registered_star
+  拿到插件实例、取其 initializer.memory_engine），**不 import LivingMemory 内部模块**，
+  以免对其包结构产生硬依赖。
+- 作用域 / 白名单判定逻辑在此内联复刻 LivingMemory 的
+  core/memory_scope.py:128 resolve_memory_scope 与 :98 is_event_memory_allowed，保持解耦。
+- 人格 ID 解析逻辑较繁，采用「仅当已确认 LivingMemory 实例存在时」惰性导入其
+  get_persona_id 的方式，并做 ImportError / 运行时异常兜底。
+
+记忆读取规则（详见设计文档）：
+- 作用域：对话历史关 → 仅 LivingMemory 作用域为 global 时启用，否则告警并禁用本组记忆；
+  对话历史开 → 用 resolve_memory_scope 解析推送会话的作用域。
+- 白名单（LivingMemory 开启 whitelist_enabled 时）：对话历史关 → 要求本组全部推送会话
+  均在白名单内才检索，否则告警禁用；对话历史开 → 仅本推送会话在白名单内才检索。
+- 人格：Watchdoc 关闭会话人格 → 不按人格过滤；开启且 LivingMemory 开启按人格过滤 →
+  取 LivingMemory 人格 ID 过滤，否则不按人格过滤。
+- global 模式：每个检测周期（_check_one）内按 (查询, session_id, persona_id) 缓存检索结果，
+  避免同目标多会话重复检索。
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from astrbot.api import logger
+
+if TYPE_CHECKING:
+    from astrbot.core.star.context import Context
+
+GLOBAL_MEMORY_SCOPE = "livingmemory:global"
+
+
+def _lm_section(config: Any, section: str, default: Any = None) -> Any:
+    """安全读取 LivingMemory 配置中的嵌套段落（如 filtering_settings / access_control）。
+
+    兼容 dict 与带 .get 方法的配置对象（LivingMemory 的 ConfigManager）。
+    """
+    getter = getattr(config, "get", None)
+    if callable(getter):
+        try:
+            val = getter(section, default)
+        except TypeError:
+            val = default
+        return val if val is not None else default
+    if isinstance(config, dict):
+        return config.get(section, default)
+    return default
+
+
+def _as_dict(value: Any) -> dict:
+    """把可能为 None / 配置对象的值归一为 dict。"""
+    if isinstance(value, dict):
+        return value
+    if value is None:
+        return {}
+    getter = getattr(value, "__dict__", None)
+    return getter() if callable(getter) else {}
+
+
+def _as_id_list(value: Any) -> list[str]:
+    """把白名单条目归一为字符串列表，兼容 list 与逗号/分号/换行分隔的字符串。"""
+    if isinstance(value, list):
+        items = [str(x).strip() for x in value]
+    else:
+        items = str(value or "").replace(";", ",").split(",")
+    return [x.strip() for x in items if x.strip()]
+
+
+class _UmoEvent:
+    """极简事件替身，仅暴露 LivingMemory 白名单 / 作用域判定所需的访问器。
+
+    AstrBot 的 unified_msg_origin 格式为 platform:message_type:session_id；
+    群聊时 session_id 为群 ID，私聊时为发送者 ID。
+    """
+
+    def __init__(self, umo: str) -> None:
+        self.unified_msg_origin = umo
+        parts = umo.split(":", 2)
+        self._platform = parts[0] if len(parts) == 3 else ""
+        self._sid = parts[2] if len(parts) == 3 else umo
+        self._type = parts[1] if len(parts) == 3 else ""
+
+    def get_platform_name(self) -> str:
+        return self._platform
+
+    def get_sender_id(self) -> str:
+        return self._sid if self._type != "group" else ""
+
+    def get_group_id(self) -> str:
+        return self._sid if self._type == "group" else ""
+
+    def get_sender_name(self) -> str:
+        return ""
+
+
+def resolve_memory_scope(filtering: dict, umo: str) -> str | None:
+    """复刻 LivingMemory core/memory_scope.py:128 resolve_memory_scope 的会话侧解析。
+
+    返回检索时应使用的 session_id；返回 None 表示不使用作用域过滤（legacy 关闭会话过滤时）。
+    """
+    isolated = {
+        x.casefold() for x in _as_id_list(filtering.get("isolated_sessions", ""))
+    }
+    if umo in isolated:
+        return umo
+    mode = str(filtering.get("memory_scope_mode", "legacy")).casefold()
+    if mode == "session":
+        return umo
+    if mode == "global":
+        return GLOBAL_MEMORY_SCOPE
+    if mode == "user":
+        ev = _UmoEvent(umo)
+        return f"livingmemory:user:{ev._platform or 'unknown'}:{ev._sid}"
+    use_session = bool(filtering.get("use_session_filtering", True))
+    if use_session:
+        return umo
+    return GLOBAL_MEMORY_SCOPE if isolated else None
+
+
+def is_event_memory_allowed(allowed_ids: list[str], umo: str) -> bool:
+    """复刻 LivingMemory core/memory_scope.py:98 的白名单候选匹配。
+
+    支持四种白名单条目（见 LivingMemory _conf_schema.json:26）：
+    裸用户/群组 ID、平台:用户 ID、完整会话 ID（UMO）。
+    """
+    allowed = {a.casefold() for a in allowed_ids}
+    if not allowed:
+        return False
+    ev = _UmoEvent(umo)
+    p, sid = ev._platform, ev._sid
+    candidates = {
+        sid,
+        umo,
+        f"{p}:{sid}" if p else "",
+    }
+    return any(c and c.casefold() in allowed for c in candidates)
+
+
+async def get_lm_persona_id(context: Context, umo: str) -> str | None:
+    """取会话人格 ID：优先复用 LivingMemory 的实现，缺失 / 异常时回退 None。"""
+    try:
+        from astrbot_plugin_livingmemory.core.utils import get_persona_id
+    except ImportError:  # LivingMemory 未安装时跳过人格过滤
+        return None
+
+    class _MinEvent:
+        unified_msg_origin = umo
+
+    try:
+        return await get_persona_id(context, _MinEvent())  # type: ignore[arg-type]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[watchdoc] 取 LivingMemory 人格 ID 失败: {exc}")
+        return None
+
+
+def _build_query(target: dict, changed_docs: list[dict]) -> str:
+    """由监控项与变更文档构造确定性检索关键词（同目标同变更下稳定，利于缓存）。"""
+    parts: list[str] = [str(target.get("name") or target.get("id") or "")]
+    for doc in changed_docs:
+        parts.append(str(doc.get("name") or doc.get("url") or ""))
+    return " ".join(p for p in parts if p)
+
+
+def _format_results(results: list[Any]) -> str:
+    """把检索结果格式化为可并入总结 history 的文本块；无结果返回空串。"""
+    lines: list[str] = []
+    for r in results[:5]:
+        content = getattr(r, "content", "") or ""
+        if content:
+            lines.append(f"- {content}")
+    if not lines:
+        return ""
+    return "【LivingMemory 长期记忆参考】\n" + "\n".join(lines)
+
+
+class LivingMemoryBridge:
+    """封装 Watchdoc 调用 LivingMemory 检索的全部决策逻辑，对调用方只暴露一个方法。"""
+
+    def __init__(self, context: Context) -> None:
+        self._context = context
+        self._cache: dict[tuple, list] = {}
+
+    def clear_cache(self) -> None:
+        """清空本检测周期的检索缓存（在 _check_one 开头调用）。"""
+        self._cache.clear()
+
+    async def _get_engine(self) -> tuple[Any, Any]:
+        """拿到 LivingMemory 的 MemoryEngine；未就绪则惰性等待初始化。
+
+        Returns:
+            (插件实例, engine)；任一不可用返回 (None, None)。
+        """
+        meta = self._context.get_registered_star("LivingMemory")
+        if (
+            not meta
+            or not getattr(meta, "star_cls", None)
+            or not getattr(meta, "activated", False)
+        ):
+            return None, None
+        lm = meta.star_cls
+        engine = getattr(lm.initializer, "memory_engine", None)
+        if engine is None:
+            try:
+                await lm.initializer.ensure_initialized()
+                engine = getattr(lm.initializer, "memory_engine", None)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"[watchdoc] LivingMemory 初始化等待失败: {exc}")
+                return lm, None
+        return lm, engine
+
+    async def recall_into_history(
+        self,
+        *,
+        target: dict,
+        changed_docs: list[dict],
+        umo: str,
+        use_persona: bool,
+        history_on: bool,
+        group_umos: list[str],
+    ) -> str:
+        """按既定规则召回长期记忆，返回可并入总结 history 的文本；不可用时返回空串。
+
+        Args:
+            target: 监控项配置。
+            changed_docs: 本次变更的文档列表（用于构造查询）。
+            umo: 当前推送会话（history_on 时用于作用域 / 白名单解析）。
+            use_persona: Watchdoc 是否开启「带上会话人格」。
+            history_on: Watchdoc 是否开启对话历史（即 history_rounds != 0）。
+            group_umos: 本份总结要投递的全部会话（白名单全量校验用）。
+
+        Returns:
+            记忆文本块；不满足检索条件或检索失败时返回空串。
+        """
+        lm, engine = await self._get_engine()
+        if engine is None:
+            return ""
+
+        fs = _as_dict(_lm_section(lm.config_manager, "filtering_settings"))
+        ac = _as_dict(_lm_section(lm.config_manager, "access_control"))
+        scope_mode = str(fs.get("memory_scope_mode", "legacy")).casefold()
+        wl_on = bool(ac.get("whitelist_enabled", False))
+        lm_persona_filter = bool(fs.get("use_persona_filtering", True))
+
+        # 作用域闸门：对话历史关时只允许 global，否则告警并禁用本组记忆
+        if not history_on and scope_mode != "global":
+            logger.warning(
+                f"[watchdoc] LivingMemory 作用域非 global（{scope_mode}），且本插件未开启对话历史，"
+                "跳过记忆读取"
+            )
+            return ""
+        if history_on:
+            # 按 LM 实际作用域配置解析；返回 None 表示不按作用域过滤（legacy 且关闭会话过滤）
+            session_id = resolve_memory_scope(fs, umo)
+        else:
+            # 对话历史关：闸门已确保此处仅 global，直接用常量，避免误触发 LM 旧数据迁移
+            session_id = GLOBAL_MEMORY_SCOPE
+
+        # 白名单闸门
+        if wl_on:
+            allowed_ids = _as_id_list(ac.get("allowed_ids", ""))
+            if not history_on:
+                if not all(is_event_memory_allowed(allowed_ids, u) for u in group_umos):
+                    logger.warning(
+                        "[watchdoc] LivingMemory 白名单未覆盖全部推送会话，跳过记忆读取"
+                    )
+                    return ""
+            elif not is_event_memory_allowed(allowed_ids, umo):
+                return ""
+
+        # 人格
+        persona_id: str | None = None
+        if use_persona and lm_persona_filter:
+            persona_id = await get_lm_persona_id(self._context, umo)
+
+        # 检索（周期内按条件缓存）
+        query = _build_query(target, changed_docs)
+        cache_key = (query, session_id, persona_id)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            results = cached
+        else:
+            try:
+                results = await engine.search_memories(
+                    query=query, k=5, session_id=session_id, persona_id=persona_id
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"[watchdoc] 召回 LivingMemory 失败: {exc}")
+                return ""
+            self._cache[cache_key] = results
+
+        return _format_results(results)
