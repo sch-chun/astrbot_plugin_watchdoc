@@ -449,15 +449,20 @@ class WatchdocPlugin(Star):
                     logger.error(f"[watchdoc] 读取 {umo} 会话历史失败: {exc}")
                     history_text = ""
                 if livingmemory_top_k > 0:
-                    memory_text = await self._lm_bridge.recall_into_history(
-                        target=target,
-                        changed_docs=change["docs"],
-                        umo=umo,
-                        use_persona=use_persona,
-                        history_on=True,
-                        group_umos=[umo],
-                        top_k=livingmemory_top_k,
-                    )
+                    try:
+                        memory_text = await self._lm_bridge.recall_into_history(
+                            target=target,
+                            changed_docs=change["docs"],
+                            umo=umo,
+                            use_persona=use_persona,
+                            history_on=True,
+                            group_umos=[umo],
+                            top_k=livingmemory_top_k,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        # 单会话记忆召回失败不能拖垮其余会话，也不影响本次变更总结
+                        logger.error(f"[watchdoc] 召回 LivingMemory 失败: {exc}")
+                        memory_text = ""
                     if memory_text:
                         history_text = (memory_text + "\n" + history_text).strip()
                 summary_text = await self._make_summary(
@@ -469,15 +474,19 @@ class WatchdocPlugin(Star):
             for group in await self._group_sessions_by_persona(target):
                 history_text = ""
                 if livingmemory_top_k > 0:
-                    memory_text = await self._lm_bridge.recall_into_history(
-                        target=target,
-                        changed_docs=change["docs"],
-                        umo=(group["umos"][0] if group["umos"] else ""),
-                        use_persona=use_persona,
-                        history_on=False,
-                        group_umos=group["umos"],
-                        top_k=livingmemory_top_k,
-                    )
+                    try:
+                        memory_text = await self._lm_bridge.recall_into_history(
+                            target=target,
+                            changed_docs=change["docs"],
+                            umo=(group["umos"][0] if group["umos"] else ""),
+                            use_persona=use_persona,
+                            history_on=False,
+                            group_umos=group["umos"],
+                            top_k=livingmemory_top_k,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error(f"[watchdoc] 召回 LivingMemory 失败: {exc}")
+                        memory_text = ""
                     history_text = memory_text
                 summary_text = await self._make_summary(
                     target, change, group, history_text

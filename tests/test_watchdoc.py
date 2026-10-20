@@ -1996,6 +1996,34 @@ async def test_tool_read_document_omits_doc_for_single_doc(monkeypatch, tmp_path
     assert "必须指定" not in await plugin._tool_read_document(event, scope="after")
 
 
+async def test_lm_recall_failure_does_not_block_notify(monkeypatch, tmp_path):
+    """记忆召回抛异常不能连累变更总结与推送（P1-2）。
+
+    召回被 try/except 包住后，单会话记忆检索失败应只清空记忆文本，
+    变更总结与推送照常发生，而不是把整轮 _check_one 拖崩、丢失本次变更通知。
+    """
+    plugin, ctx = make_plugin(
+        monkeypatch,
+        tmp_path,
+        {
+            "targets": [{**TARGET, "sessions": ["a:GroupMessage:1"]}],
+            "livingmemory_top_k": 5,
+        },
+    )
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("LM 爆炸")
+
+    monkeypatch.setattr(plugin._lm_bridge, "recall_into_history", boom)
+    patch_fetch(monkeypatch, plugin, HTML)
+    await plugin._check_all()
+
+    patch_fetch(monkeypatch, plugin, HTML.replace("非流式", "流式"))
+    await plugin._check_all()  # 不抛异常
+
+    assert len(ctx.sent) == 1  # 仍正常推送
+
+
 async def test_tool_search_document_selects_doc_by_index(monkeypatch, tmp_path):
     """search 工具同样按 #序号 选中指定文档，避免只在第一篇里找。"""
     plugin, _ = make_plugin(monkeypatch, tmp_path, {})
