@@ -18,11 +18,13 @@
     "default": true,
     "hint": "按每个推送会话当前生效的人格生成总结；人格相同的会话共用一份。关闭后所有会话共用一份不含人格的总结"
   },
-  "use_livingmemory": {
-    "description": "总结时参考 LivingMemory 长期记忆",
-    "type": "bool",
-    "default": false,
-    "hint": "开启后，Watchdoc 在总结文档变更时召回 LivingMemory（lxfight）的长期记忆作为上下文。需已安装并启用 LivingMemory 插件；访问受其作用域与白名单配置约束。"
+  "livingmemory_top_k": {
+    "description": "总结时从 LivingMemory 召回的记忆条数",
+    "type": "int",
+    "default": 0,
+    "min": 0,
+    "max": 50,
+    "hint": "设为 0 关闭长期记忆参考（默认值）；大于 0 时，Watchdoc 在总结文档变更时召回 LivingMemory（lxfight）最近 N 条相关记忆作为上下文，N 即此处数值。需已安装并启用 LivingMemory 插件；访问受其作用域与白名单配置约束。"
   },
   "agent_mode": {
     "description": "总结使用 Agent 循环",
