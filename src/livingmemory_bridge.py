@@ -58,8 +58,8 @@ def _as_dict(value: Any) -> dict:
         return value
     if value is None:
         return {}
-    getter = getattr(value, "__dict__", None)
-    return getter() if callable(getter) else {}
+    d = getattr(value, "__dict__", None)
+    return d if isinstance(d, dict) else {}
 
 
 def _as_id_list(value: Any) -> list[str]:
@@ -352,6 +352,10 @@ class LivingMemoryBridge:
 
         # 白名单闸门
         if wl_on:
+            if not group_umos:
+                # 没有任何推送会话却走到召回（异常边界）：all([]) 为 True 会误放行，
+                # 此处直接跳过，避免向不存在的会话投递记忆
+                return ""
             if not history_on:
                 if not all(is_event_memory_allowed(cfg, u) for u in group_umos):
                     logger.warning(

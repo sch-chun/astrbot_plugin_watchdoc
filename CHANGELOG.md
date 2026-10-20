@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 - **作用域 / 白名单复刻对齐（P2）**：`resolve_memory_scope` / `is_event_memory_allowed` / 身份归并 `_resolve_event_identity` 复刻 LivingMemory 真实语义——补齐 `identity_aliases` 归并、`identity` 候选集、群聊按群 ID 命中白名单、`isolated_sessions` 单向一致比对；`_format_results` 兼容 dict 与对象两种返回形态；模块文档与实现对齐（确实惰性 import 了 `core.utils`）。
 - **补测试（P1-1）**：新增 `tests/test_livingmemory_bridge.py`，覆盖插件名匹配、作用域 / 白名单 / 身份三套闸门、`_format_results` 双形态、人格 fail closed 与正常召回路径。
 
+### Fixed（第二轮小修）
+- **`_as_dict` 对非 dict 配置对象恒返 `{}`**：原 `callable(getter)` 判定恒为 False（`__dict__` 是 dict 非 callable），导致上游一旦把 `get()` 返回值从 dict 换成对象就静默变成空配置。改为取 `__dict__` 并校验 `isinstance(d, dict)`。
+- **白名单闸门空 `group_umos` 误放行**：`group_umos` 为空时 `all([])` 为 True 会绕过白名单放行。新增 `if not group_umos: return ""` 直接跳过召回，并补回归测试 `test_recall_empty_group_umos_skips`。
+- **测试文件 Ruff 清理**：修掉新测试里的 `RUF059`（未使用的拆包变量）与 `C408`（`dict()` 调用改字面量）。
+
 ## [0.1.13] - 2026-10-18
 
 ### Changed
