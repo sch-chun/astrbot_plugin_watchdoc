@@ -9,7 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 
 ### Added
 
-- **总结时可选召回 LivingMemory 长期记忆**：新增配置 `livingmemory_top_k`（默认 0，0=关闭；大于 0 时取最近 N 条记忆，N 即该值）。Watchdoc 在总结文档变更时调用 LivingMemory 的长期记忆作为上下文，受其作用域与白名单配置约束。新增薄桥接模块 `src/livingmemory_bridge.py`：仅经 AstrBot 公共 API（`Context.get_registered_star`）拿到 LivingMemory 实例、取其 `initializer.memory_engine` 检索，不 import 其内部模块以保持解耦。模式无关逻辑：对话历史关（`history_rounds=0`）时仅当 LivingMemory 作用域为 global 才启用记忆、否则告警并禁用本组；对话历史开时按 LivingMemory 实际作用域配置与推送会话检索。白名单（`access_control.whitelist_enabled`）开启时，历史关要求本组全部推送会话均在白名单内、历史开仅对白名单内会话检索。人格：Watchdoc 关闭会话人格（`use_session_persona`）时不按人格过滤；开启且 LivingMemory 开启按人格过滤（`use_persona_filtering`）时取人格 ID 过滤。global 模式在每次检测周期内按 (查询, 作用域, 人格) 缓存检索结果，避免同目标多会话重复召回。需已安装并启用 LivingMemory 插件（lxfight）。
+- **总结时可选召回 LivingMemory 长期记忆**：新增配置 `livingmemory_top_k`（默认 0，0=关闭；大于 0 时取最近 N 条记忆，N 即该值）。Watchdoc 在总结文档变更时调用 LivingMemory 的长期记忆作为上下文，受其作用域与白名单配置约束。新增薄桥接模块 `src/livingmemory_bridge.py`：经 AstrBot 公共 API（`Context.get_registered_star`）按插件目录名 `astrbot_plugin_livingmemory` 拿到 LivingMemory 实例、取其 `initializer.memory_engine` 检索；仅惰性 import 其 `core.utils.get_persona_id`（人格解析）以保持解耦，作用域 / 白名单 / 身份归并逻辑按 LivingMemory `core/memory_scope.py` 的语义复刻在桥接模块内（行为一致为目标）。模式无关逻辑：对话历史关（`history_rounds=0`）时仅当 LivingMemory 作用域为 global 才启用记忆、否则告警并禁用本组；对话历史开时按 LivingMemory 实际作用域配置与推送会话检索。白名单（`access_control.whitelist_enabled`）开启时，历史关要求本组全部推送会话均在白名单内、历史开仅对白名单内会话检索。人格：Watchdoc 关闭会话人格（`use_session_persona`）时不按人格过滤；开启且 LivingMemory 开启按人格过滤（`use_persona_filtering`）时取人格 ID 过滤。global 模式在每次检测周期内按 (查询, 作用域, 人格) 缓存检索结果，避免同目标多会话重复召回。需已安装并启用 LivingMemory 插件。
+
+### Fixed
+
+- **插件名匹配致命错误（P0）**：`_get_engine` 原按显示名 `LivingMemory` 匹配插件，与 `get_registered_star` 的 `star.name`（= `metadata.yaml` 的 `name` = `astrbot_plugin_livingmemory`）不符，导致功能 100% 静默失效。改为按 `astrbot_plugin_livingmemory` 精确匹配，并加 `display_name` 兜底与「未找到 LivingMemory」调试日志；补 `initializer` 缺失兜底。
+- **异常隔离（P1）**：`_check_one` 两处 `recall_into_history` 调用现包 try/except，单会话记忆召回失败不再拖垮整轮检测与变更推送；新增回归测试 `test_lm_recall_failure_does_not_block_notify` 锁定。
+- **人格解析 fail closed（P1）**：要求按人格过滤却解析不到人格 ID 时跳过本次召回，而非以 `persona_id=None` 调用 `search_memories`（会被 LivingMemory 解释为「不过滤人格」、把其他人格的记忆混进来）。
+- **作用域 / 白名单复刻对齐（P2）**：`resolve_memory_scope` / `is_event_memory_allowed` / 身份归并 `_resolve_event_identity` 复刻 LivingMemory 真实语义——补齐 `identity_aliases` 归并、`identity` 候选集、群聊按群 ID 命中白名单、`isolated_sessions` 单向一致比对；`_format_results` 兼容 dict 与对象两种返回形态；模块文档与实现对齐（确实惰性 import 了 `core.utils`）。
+- **补测试（P1-1）**：新增 `tests/test_livingmemory_bridge.py`，覆盖插件名匹配、作用域 / 白名单 / 身份三套闸门、`_format_results` 双形态、人格 fail closed 与正常召回路径。
 
 ## [0.1.13] - 2026-10-18
 
