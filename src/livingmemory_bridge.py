@@ -166,7 +166,7 @@ def _build_query(target: dict, changed_docs: list[dict]) -> str:
 def _format_results(results: list[Any]) -> str:
     """把检索结果格式化为可并入总结 history 的文本块；无结果返回空串。"""
     lines: list[str] = []
-    for r in results[:5]:
+    for r in results:
         content = getattr(r, "content", "") or ""
         if content:
             lines.append(f"- {content}")
@@ -219,6 +219,7 @@ class LivingMemoryBridge:
         use_persona: bool,
         history_on: bool,
         group_umos: list[str],
+        top_k: int = 5,
     ) -> str:
         """按既定规则召回长期记忆，返回可并入总结 history 的文本；不可用时返回空串。
 
@@ -227,14 +228,17 @@ class LivingMemoryBridge:
             changed_docs: 本次变更的文档列表（用于构造查询）。
             umo: 当前推送会话（history_on 时用于作用域 / 白名单解析）。
             use_persona: Watchdoc 是否开启「带上会话人格」。
-            history_on: Watchdoc 是否开启对话历史（即 history_rounds != 0）。
+            history_on: Watchdog 是否开启对话历史（即 history_rounds != 0）。
             group_umos: 本份总结要投递的全部会话（白名单全量校验用）。
+            top_k: 召回的记忆条数（取自 Watchdoc 配置 livingmemory_top_k）；<=0 视为关闭。
 
         Returns:
-            记忆文本块；不满足检索条件或检索失败时返回空串。
+            记忆文本块；不满足检索条件、top_k<=0 或检索失败时返回空串。
         """
         lm, engine = await self._get_engine()
         if engine is None:
+            return ""
+        if top_k <= 0:  # livingmemory_top_k 为 0 表示关闭长期记忆参考
             return ""
 
         fs = _as_dict(_lm_section(lm.config_manager, "filtering_settings"))
@@ -283,7 +287,7 @@ class LivingMemoryBridge:
         else:
             try:
                 results = await engine.search_memories(
-                    query=query, k=5, session_id=session_id, persona_id=persona_id
+                    query=query, k=top_k, session_id=session_id, persona_id=persona_id
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.error(f"[watchdoc] 召回 LivingMemory 失败: {exc}")

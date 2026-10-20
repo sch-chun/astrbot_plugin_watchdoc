@@ -426,9 +426,9 @@ class WatchdocPlugin(Star):
         # 同一次检测里变化的文档合并进同一份总结
         change = {"docs": changed}
         deliveries = []
-        lm_enabled = bool(self.config.get("use_livingmemory", False))
+        livingmemory_top_k = int(self.config.get("livingmemory_top_k", 0) or 0)
         use_persona = bool(self.config.get("use_session_persona", True))
-        if lm_enabled:
+        if livingmemory_top_k > 0:
             self._lm_bridge.clear_cache()
         raw = self.config.get("history_rounds")
         rounds = int(raw) if raw is not None else DEFAULT_HISTORY_ROUNDS
@@ -448,7 +448,7 @@ class WatchdocPlugin(Star):
                     # 单会话历史读不到不能拖垮其余会话，也不影响本次变更总结
                     logger.error(f"[watchdoc] 读取 {umo} 会话历史失败: {exc}")
                     history_text = ""
-                if lm_enabled:
+                if livingmemory_top_k > 0:
                     memory_text = await self._lm_bridge.recall_into_history(
                         target=target,
                         changed_docs=change["docs"],
@@ -456,6 +456,7 @@ class WatchdocPlugin(Star):
                         use_persona=use_persona,
                         history_on=True,
                         group_umos=[umo],
+                        top_k=livingmemory_top_k,
                     )
                     if memory_text:
                         history_text = (memory_text + "\n" + history_text).strip()
@@ -467,7 +468,7 @@ class WatchdocPlugin(Star):
             # 关闭历史参考：按人格分组，人格相同的会话共用一份总结（token 最省）
             for group in await self._group_sessions_by_persona(target):
                 history_text = ""
-                if lm_enabled:
+                if livingmemory_top_k > 0:
                     memory_text = await self._lm_bridge.recall_into_history(
                         target=target,
                         changed_docs=change["docs"],
@@ -475,6 +476,7 @@ class WatchdocPlugin(Star):
                         use_persona=use_persona,
                         history_on=False,
                         group_umos=group["umos"],
+                        top_k=livingmemory_top_k,
                     )
                     history_text = memory_text
                 summary_text = await self._make_summary(

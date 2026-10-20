@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 
 ### Added
 
-- **总结时可选召回 LivingMemory 长期记忆**：新增总开关 `use_livingmemory`（默认关，显式 opt-in）。开启后，Watchdoc 在总结文档变更时调用 LivingMemory 的长期记忆作为上下文，受其作用域与白名单配置约束。新增薄桥接模块 `src/livingmemory_bridge.py`：仅经 AstrBot 公共 API（`Context.get_registered_star`）拿到 LivingMemory 实例、取其 `initializer.memory_engine` 检索，不 import 其内部模块以保持解耦。模式无关逻辑：对话历史关（`history_rounds=0`）时仅当 LivingMemory 作用域为 global 才启用记忆、否则告警并禁用本组；对话历史开时按 LivingMemory 实际作用域配置与推送会话检索。白名单（`access_control.whitelist_enabled`）开启时，历史关要求本组全部推送会话均在白名单内、历史开仅对白名单内会话检索。人格：Watchdoc 关闭会话人格（`use_session_persona`）时不按人格过滤；开启且 LivingMemory 开启按人格过滤（`use_persona_filtering`）时取人格 ID 过滤。global 模式在每次检测周期内按 (查询, 作用域, 人格) 缓存检索结果，避免同目标多会话重复召回。需已安装并启用 LivingMemory 插件（lxfight）。
+- **总结时可选召回 LivingMemory 长期记忆**：新增配置 `livingmemory_top_k`（默认 0，0=关闭；大于 0 时取最近 N 条记忆，N 即该值）。Watchdoc 在总结文档变更时调用 LivingMemory 的长期记忆作为上下文，受其作用域与白名单配置约束。新增薄桥接模块 `src/livingmemory_bridge.py`：仅经 AstrBot 公共 API（`Context.get_registered_star`）拿到 LivingMemory 实例、取其 `initializer.memory_engine` 检索，不 import 其内部模块以保持解耦。模式无关逻辑：对话历史关（`history_rounds=0`）时仅当 LivingMemory 作用域为 global 才启用记忆、否则告警并禁用本组；对话历史开时按 LivingMemory 实际作用域配置与推送会话检索。白名单（`access_control.whitelist_enabled`）开启时，历史关要求本组全部推送会话均在白名单内、历史开仅对白名单内会话检索。人格：Watchdoc 关闭会话人格（`use_session_persona`）时不按人格过滤；开启且 LivingMemory 开启按人格过滤（`use_persona_filtering`）时取人格 ID 过滤。global 模式在每次检测周期内按 (查询, 作用域, 人格) 缓存检索结果，避免同目标多会话重复召回。需已安装并启用 LivingMemory 插件（lxfight）。
 
 ## [0.1.13] - 2026-10-18
 
