@@ -105,6 +105,7 @@ async def test_get_engine_falls_back_to_display_name():
     star = FakeStar("wrong-internal-name", "LivingMemory", star_cls=lm)
     b = LivingMemoryBridge(FakeContext([star]))
     got_lm, got_engine = await b._get_engine()
+    assert got_lm is lm
     assert got_engine is engine
 
 
@@ -353,15 +354,15 @@ async def test_recall_caches_within_cycle(monkeypatch):
     }
     b, engine = make_bridge(cfg, engine)
     monkeypatch.setattr(bridge, "get_lm_persona_id", _persona_none)
-    kwargs = dict(
-        target={"name": "X"},
-        changed_docs=[],
-        umo="qq:friend:123",
-        use_persona=False,
-        history_on=False,
-        group_umos=["qq:friend:123"],
-        top_k=5,
-    )
+    kwargs = {
+        "target": {"name": "X"},
+        "changed_docs": [],
+        "umo": "qq:friend:123",
+        "use_persona": False,
+        "history_on": False,
+        "group_umos": ["qq:friend:123"],
+        "top_k": 5,
+    }
     await b.recall_into_history(**kwargs)
     await b.recall_into_history(**kwargs)
     assert len(engine.calls) == 1  # 第二次命中周期缓存
@@ -514,6 +515,34 @@ async def test_recall_whitelist_blocks_single(monkeypatch):
         top_k=5,
     )
     assert out == ""
+
+
+async def test_recall_empty_group_umos_skips(monkeypatch):
+    # 白名单开启但 group_umos 为空：all([]) 为 True 会误放行，应直接跳过召回
+    engine = FakeEngine()
+    cfg = {
+        "filtering_settings": {
+            "memory_scope_mode": "global",
+            "use_persona_filtering": False,
+        },
+        "access_control": {
+            "whitelist_enabled": True,
+            "allowed_ids": "qq:friend:123",
+        },
+    }
+    b, engine = make_bridge(cfg, engine)
+    monkeypatch.setattr(bridge, "get_lm_persona_id", _persona_none)
+    out = await b.recall_into_history(
+        target={"name": "X"},
+        changed_docs=[],
+        umo="qq:friend:123",
+        use_persona=False,
+        history_on=False,
+        group_umos=[],
+        top_k=5,
+    )
+    assert out == ""
+    assert engine.calls == []
 
 
 async def test_recall_history_off_requires_global(monkeypatch):
