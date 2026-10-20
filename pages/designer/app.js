@@ -1097,6 +1097,14 @@ async function doFetch(url) {
 }
 
 el.fetch.addEventListener("click", () => doFetch(el.url.value.trim()));
+// 地址栏回车即抓取，省去鼠标点按钮
+el.url.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const url = el.url.value.trim();
+    if (url) doFetch(url);
+  }
+});
 
 el.saveDoc.addEventListener("click", saveCurrentDoc);
 el.addDoc.addEventListener("click", startNewDoc);
