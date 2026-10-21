@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.2.1] - 2026-10-21
+
+### Added
+
+- **Markdown 源支持**：监控地址以 `.md` 结尾时，抓到的已是 Markdown 原文，插件整篇监控、不再经 MarkItDown 转换（避免把 `# 标题` 等当 HTML 误转、丢失原始结构）；配置面板自动识别并提示「整篇监控，无需选取区域」，保存时放行此类文档的空选择器。
+- **官方 `.md` 源静默探测**：在配置页输入网址抓取后，后端对非 Markdown 地址静默请求 `<url>.md`，命中官方 Markdown 源则在配置页右上角状态栏（`#status`）以琥珀色提示「检测到官方 Markdown 源，建议改成它以获得更稳定的监控」。源站 HTML 结构不稳定时，改用官方 Markdown 源可显著提升监控稳定性。
+- **Markdown 标题适配**：Markdown 源文档名取自首个 frontmatter `title:` 或首个 ATX 标题（`# 标题`），都没有时退化为 URL 末段，使文档列表与通知可读。
+
 ## [0.2.0] - 2026-10-20
 
 ### Added

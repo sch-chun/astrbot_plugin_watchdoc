@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import html
 import mimetypes
 from pathlib import Path
 
@@ -358,12 +359,15 @@ class WatchdocPlugin(Star):
             if not url:
                 continue
             slug = slug_map[url]
+            is_md = fetch.is_markdown_url(url)
             html = await self._fetch(url)
+            # Markdown 源已是原文，selector 无意义，整篇采用；非 md 才走选择器裁剪。
+            selector_used = "" if is_md else str(doc.get("selector") or "")
             # bs4 与 markitdown 都是同步阻塞的，放进线程避免卡住事件循环。
             # 归一化同理：ignore_patterns 是用户填的正则，长文本上灾难性回溯会
             # 把整个 bot 的事件循环拖死，而这行跑的是无人值守的定时任务。
             current = await asyncio.to_thread(
-                self._to_markdown, html, str(doc.get("selector") or ""), tid
+                self._to_markdown, html, selector_used, tid, is_md
             )
             current = await asyncio.to_thread(self._normalize, current, target)
             if not current.strip():
@@ -407,11 +411,18 @@ class WatchdocPlugin(Star):
             # 更新该文档快照（未变化的文档保持原基线，不反复写）
             doc_dir.mkdir(parents=True, exist_ok=True)
             new_path.write_text(current, encoding="utf-8")
+            # Markdown 源无 name 时取文档标题（frontmatter/首个 # 标题/URL 末段），
+            # 让文档列表与通知可读；其余退化成地址。
+            name = str(doc.get("name") or "")
+            if is_md and not name:
+                name = fetch.extract_markdown_title(current, url)
+            if not name:
+                name = url
             changed.append(
                 {
                     "url": url,
-                    "selector": str(doc.get("selector") or ""),
-                    "name": str(doc.get("name") or doc.get("url") or ""),
+                    "selector": selector_used,
+                    "name": name,
                     "before": previous,
                     "after": current,
                     "diff": diff,
@@ -511,18 +522,21 @@ class WatchdocPlugin(Star):
         """
         return await fetch.fetch_html(url)
 
-    def _to_markdown(self, html: str, selector: str, tid: str) -> str:
+    def _to_markdown(
+        self, html: str, selector: str, tid: str, is_markdown: bool = False
+    ) -> str:
         """把 HTML 裁剪成正文并转成 Markdown。
 
         Args:
-            html: 原始 HTML。
+            html: 原始 HTML，或 Markdown 源原文（``is_markdown=True`` 时）。
             selector: 正文容器的 CSS 选择器。
             tid: 监控项 ID，仅用于日志。
+            is_markdown: 输入是否已是 Markdown 原文。
 
         Returns:
             Markdown 文本。
         """
-        return fetch.to_markdown(html, selector, tid)
+        return fetch.to_markdown(html, selector, tid, is_markdown)
 
     async def _probe_url(self, url: str) -> str:
         """探测正文容器选择器。
@@ -640,24 +654,49 @@ class WatchdocPlugin(Star):
         )
 
     async def _api_preview(self):
-        """抓取页面并返回清洗后的 HTML 供 Page 渲染。"""
+        """抓取页面并返回清洗后的 HTML 供 Page 渲染。
+
+        对 Markdown 源（``url`` 以 ``.md`` 结尾）做整篇适配：直接渲染原文、
+        返回 ``isMarkdown=true`` 与 Markdown 标题，前端据此自动整篇监控、无需选择器。
+        对非 Markdown 地址静默探测官方 ``.md`` 源，命中则在响应带 ``mdSource`` 提示前端。
+        """
         url = request.query.get("url", "")
         if not url:
             return error_response("缺少 url 参数", status_code=400)
         try:
-            html = await self._fetch(url)
+            raw = await self._fetch(url)
         except Exception as exc:  # noqa: BLE001
             return error_response(
                 f"抓取失败：{type(exc).__name__}: {exc}", status_code=502
             )
 
-        soup = await asyncio.to_thread(fetch.build_soup, html)
+        is_md = fetch.is_markdown_url(url)
+        if is_md:
+            # 已是 Markdown 原文：整篇监控，无需选择器。escaped 后放进 <pre> 交给
+            # 既有 Shadow 渲染管线，用户能直接看到将被监控的内容。
+            preview_html = f'<pre class="md-source">{html.escape(raw)}</pre>'
+            return json_response(
+                {
+                    "html": preview_html,
+                    "textLength": len(raw),
+                    "title": fetch.extract_markdown_title(raw, url),
+                    "isMarkdown": True,
+                    "mdSource": None,
+                }
+            )
+
+        soup = await asyncio.to_thread(fetch.build_soup, raw)
         title = fetch.extract_title(soup)
+        # 静默探测官方 .md 源：非 md 地址才探，命中则提示前端建议改用 .md
+        md_text = await fetch.probe_markdown(url, self._fetch)
+        md_source = {"url": url + ".md"} if md_text is not None else None
         return json_response(
             {
-                "html": self._sanitize_for_preview(html, url),
+                "html": self._sanitize_for_preview(raw, url),
                 "textLength": len(soup.get_text(" ", strip=True)),
                 "title": title,
+                "isMarkdown": False,
+                "mdSource": md_source,
             }
         )
 
