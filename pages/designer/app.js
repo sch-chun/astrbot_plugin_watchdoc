@@ -71,6 +71,15 @@ let currentUrl = "";
 let currentSelector = "";
 // 当前抓取页面的标题：加文档时随预览一并取回，落进文档的 name 字段，让文档列表更可读
 let currentTitle = "";
+// 当前抓取地址是否为 Markdown 源（后端 isMarkdown）：是则整篇监控、无需选择器
+let currentIsMarkdown = false;
+
+// 与后端 fetch.is_markdown_url 对齐：去掉片段/查询串、去末尾斜杠后看是否以 .md 结尾
+function isMarkdownUrl(url) {
+  if (!url) return false;
+  const core = url.split("#")[0].split("?")[0].replace(/\/+$/, "");
+  return core.toLowerCase().endsWith(".md");
+}
 
 /* ---------- 列表伸缩动画 ---------- */
 
@@ -656,6 +665,7 @@ function resetPage() {
   el.url.value = "";
   el.pick.disabled = true;
   el.pick.textContent = "选取区域";
+  currentIsMarkdown = false;
   setStatus("");
   el.hint.textContent = INITIAL.hint;
   el.pickEmpty.style.display = "";
@@ -727,6 +737,7 @@ function startNewDoc() {
   el.saveDoc.disabled = true; // 未选区域前按钮保持灰
   el.url.value = "";
   el.preview.innerHTML = "";
+  currentIsMarkdown = false;
   animateList(el.candidates, () => {
     el.candidates.innerHTML = "";
   });
@@ -809,8 +820,12 @@ function renderDocList() {
     titleSpan.title = doc.name || "";
     const selSpan = document.createElement("span");
     selSpan.className = "doc-selector";
-    selSpan.textContent = doc.selector ? doc.selector : "（未选区域）";
-    selSpan.title = doc.selector || "";
+    selSpan.textContent = doc.selector
+      ? doc.selector
+      : isMarkdownUrl(doc.url)
+        ? "整篇（Markdown）"
+        : "（未选区域）";
+    selSpan.title = doc.selector || (isMarkdownUrl(doc.url) ? "整篇监控" : "");
     const urlSpan = document.createElement("span");
     urlSpan.className = "doc-url";
     urlSpan.textContent = shortUrl(doc.url);
@@ -1055,6 +1070,7 @@ async function doFetch(url) {
   try {
     const data = await bridge.apiGet("preview", { url });
     renderPreview(data.html);
+    currentIsMarkdown = !!(data && data.isMarkdown);
     // 新抓的页面与上一页无关：清掉上一轮点选区留下的候选、空提示复位、提示语回初始，
     // 否则换链接再抓，旧候选仍挂在列表、空提示被永久隐藏，误导用户以为还能用
     // 候选面板此刻可能正开着（上一轮点选过），裸清会「啪」地空掉——包进 animateList 收起过渡
@@ -1063,7 +1079,6 @@ async function doFetch(url) {
     });
     el.pickEmpty.style.display = "";
     el.hint.textContent = INITIAL.hint;
-    highlightMatches(currentSelector.trim());
     el.url.value = url;
     currentUrl = url;
     currentTitle = (data && data.title) || "";
@@ -1072,18 +1087,43 @@ async function doFetch(url) {
     if (editingDocIndex !== null && currentDocs[editingDocIndex] && currentDocs[editingDocIndex].url !== url) {
       editingDocIndex = null;
     }
-    // 没抓到页面就无从选区域、也无从判断监控什么，这两块先不露出来
-    el.pickCollapse.classList.add("open");
-    showForm();
-    if (!data.textLength || data.textLength < 500) {
-      setStatus("抓到的正文很少，该页面可能需要 JS 渲染，无法可视化选取", "warn");
+    if (currentIsMarkdown) {
+      // Markdown 源：整篇监控，无需选区域，直接解锁保存
+      currentSelector = "";
+      el.pick.disabled = true;
+      el.selectorHint.textContent = "Markdown 源：已自动整篇监控，无需选取区域";
+      el.matchMeta.textContent = "";
+      el.matchText.textContent = "Markdown 原文即监控内容（见上方预览）";
+      el.matchCollapse.classList.remove("open");
+      el.pickCollapse.classList.remove("open");
+      el.saveDoc.disabled = false;
+      setStatus("已加载 Markdown 源（整篇监控，无需选区）", "success");
     } else {
-      setStatus(`已加载（正文 ${data.textLength} 字符）`);
+      highlightMatches(currentSelector.trim());
+      el.pick.disabled = false;
+      // 没抓到页面就无从选区域、也无从判断监控什么，这两块先不露出来
+      el.pickCollapse.classList.add("open");
+      if (!data.textLength || data.textLength < 500) {
+        setStatus("抓到的正文很少，该页面可能需要 JS 渲染，无法可视化选取", "warn");
+      } else {
+        setStatus(`已加载（正文 ${data.textLength} 字符）`);
+      }
+      // 后端静默探到官方 .md 源：直接在右上角状态栏提示改用 .md
+      // （不向会话发消息、不开额外横幅）——抓取即提示，用户手动改地址即可
+      if (data && data.mdSource && data.mdSource.url) {
+        setStatus(
+          `检测到官方 Markdown 源：${data.mdSource.url}，建议改成它以获得更稳定的监控`,
+          "warn"
+        );
+      }
     }
+    showForm();
     // 等外部样式表/字体真正就绪再淡入（超时兜底，避免样式卡死时一直转圈）；
     // 等待期间 spinner 仍盖着隐掉的预览，用户看到的是正常的加载态
     await withTimeout(whenPreviewStyled(shadow), 2000);
     setPreviewLoading(false);
+    // setPreviewLoading(false) 会按 !shadow 重新启用「选取区域」；Markdown 源无需选区，置回禁用
+    if (currentIsMarkdown) el.pick.disabled = true;
     // 双 rAF：先保证有一次 opacity:0 的绘制，否则浏览器可能把「置 0/置 1」合并成一次提交而看不到过渡
     await new Promise((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(resolve)),
@@ -1119,8 +1159,10 @@ el.save.addEventListener("click", async () => {
   commitDraft();
   if (!currentDocs.length) return setStatus("请先抓取至少一个文档", "warn");
   // 选择器为必填：任一篇没选区域就拦下，确保落盘的每条文档都有明确监控范围
-  if (currentDocs.some((d) => !d.selector)) {
-    return setStatus("每篇文档都必须选择一个选择器：点选候选后点「保存文档」", "warn");
+  // 选择器为必填：任一篇非 Markdown 文档没选区域就拦下，确保落盘的每条文档都有明确监控范围。
+  // Markdown 源（地址以 .md 结尾）整篇监控，无需选择器，放行。
+  if (currentDocs.some((d) => !d.selector && !isMarkdownUrl(d.url))) {
+    return setStatus("每篇非 Markdown 文档都必须选择一个选择器：点选候选后点「保存文档」", "warn");
   }
   const name = el.name.value.trim();
   // 编辑已有项时沿用原标识：换了网址也还是同一条记录，否则会分裂成两条；

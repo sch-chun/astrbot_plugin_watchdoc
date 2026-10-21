@@ -369,6 +369,18 @@ html[data-booting] .layout {
   background: var(--glass-bg);
 }
 
+/* Markdown 源预览：原样展示将被监控的 Markdown 文本 */
+.md-source {
+  margin: 0;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
 .side {
   width: 360px;
   overflow-y: auto;

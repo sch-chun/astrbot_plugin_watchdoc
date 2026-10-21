@@ -2658,3 +2658,165 @@ class TestPageBackgroundRouteConditionalRequest:
         second = await _call_page_background(plugin, {"If-None-Match": f"W/{etag}"})
         assert second.status_code == 304
         assert second.body == b""
+
+
+# ---------- Markdown 源支持（v0.2.1） ----------
+
+
+def _const_fetcher(value):
+    """返回一个始终返回固定值的异步抓取替身（与插件 _fetch 的 async 签名一致）。"""
+
+    async def _f(_u):
+        return value
+
+    return _f
+
+
+async def _call_preview(plugin, url):
+    token = web_mod._request_var.set(FakePreviewRequest({"url": url}))
+    try:
+        return await plugin._api_preview()
+    finally:
+        web_mod._request_var.reset(token)
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://x.com/a.md", True),
+        ("https://x.com/a.md?tok=1#z", True),
+        ("https://x.com/a.md/", True),
+        ("https://x.com/a.MD", True),
+        ("https://x.com/a", False),
+        ("https://x.com/a.html", False),
+        ("", False),
+    ],
+)
+def test_is_markdown_url(url, expected):
+    assert fetch.is_markdown_url(url) is expected
+
+
+def test_looks_like_markdown():
+    assert fetch.looks_like_markdown("# 标题\n\n正文") is True
+    assert fetch.looks_like_markdown("纯文本没有标签") is True
+    assert fetch.looks_like_markdown("<!doctype html><html>404</html>") is False
+    assert fetch.looks_like_markdown("  \n  <html><body>x</body></html>") is False
+
+
+def test_extract_markdown_title_frontmatter():
+    md = "---\ntitle: 官方文档\n---\n# 标题\n正文"
+    assert fetch.extract_markdown_title(md, "https://x.com/a.md") == "官方文档"
+
+
+def test_extract_markdown_title_atx():
+    md = "# 真正的标题 #\n\n正文内容"
+    assert fetch.extract_markdown_title(md, "https://x.com/a.md") == "真正的标题"
+
+
+def test_extract_markdown_title_fallback_url():
+    md = "没有标题的纯文本段落。"
+    assert fetch.extract_markdown_title(md, "https://x.com/path/foo.md") == "foo"
+    assert fetch.extract_markdown_title(md, "https://x.com/path/foo.md?x=1") == "foo"
+
+
+def test_to_markdown_markdown_shortcircuit():
+    """Markdown 源应原样整篇返回，不经 MarkItDown 转换（保留 # 标题等）。"""
+    raw = "# 标题\n\n- 列表项\n\n正文"
+    assert fetch.to_markdown(raw, "ignored", "tid", is_markdown=True) == raw
+
+
+async def test_probe_markdown_already_md_returns_none():
+    async def _f(u):
+        raise AssertionError("不应再发请求")
+
+    assert await fetch.probe_markdown("https://x.com/a.md", _f) is None
+
+
+async def test_probe_markdown_found():
+    async def _f(u):
+        assert u == "https://x.com/a.md"
+        return "# 官方源\n\n内容"
+
+    assert await fetch.probe_markdown("https://x.com/a", _f) == "# 官方源\n\n内容"
+
+
+async def test_probe_markdown_html_error_page_is_none():
+    async def _f(u):
+        return "<!doctype html><html>404 Not Found</html>"
+
+    assert await fetch.probe_markdown("https://x.com/a", _f) is None
+
+
+async def test_probe_markdown_failure_is_silent():
+    async def _f(u):
+        raise RuntimeError("404")
+
+    assert await fetch.probe_markdown("https://x.com/a", _f) is None
+
+
+MD_DOC = "# Markdown 标题\n\n第一段正文。\n\n第二段正文。"
+
+
+async def test_api_preview_markdown(monkeypatch, tmp_path):
+    """预览 .md 源应返回 isMarkdown=true、整篇预览与 Markdown 标题。"""
+    plugin, _ = make_plugin(monkeypatch, tmp_path, {"targets": []})
+    monkeypatch.setattr(plugin, "_fetch", _const_fetcher(MD_DOC))
+    resp = await _call_preview(plugin, "https://x.com/doc.md")
+    body = json.loads(resp.body)
+    assert body["isMarkdown"] is True
+    assert "Markdown 标题" in body["html"]
+    assert body["title"] == "Markdown 标题"
+    assert body["mdSource"] is None
+
+
+async def test_api_preview_md_source_hint(monkeypatch, tmp_path):
+    """预览非 md 地址且探到官方 .md 源时，响应带 mdSource。"""
+    plugin, _ = make_plugin(monkeypatch, tmp_path, {"targets": []})
+
+    async def _fake_fetch(url):
+        if url.endswith(".md"):
+            return "# 官方源\n\n内容"
+        return HTML
+
+    monkeypatch.setattr(plugin, "_fetch", _fake_fetch)
+    resp = await _call_preview(plugin, "https://x.com/doc")
+    body = json.loads(resp.body)
+    assert body["isMarkdown"] is False
+    assert body["mdSource"] == {"url": "https://x.com/doc.md"}
+
+
+MD_TARGET = {
+    "id": "md",
+    "name": "md 文档",
+    "documents": [{"url": "https://example.com/doc.md", "selector": "", "name": ""}],
+    "enabled": True,
+    "sessions": ["fake:GroupMessage:1"],
+}
+
+
+async def test_check_one_markdown_builds_whole_doc_baseline(monkeypatch, tmp_path):
+    """md 源首次检查：整篇落盘（不经 MarkItDown）、标题作 name、不触发总结。"""
+    plugin, ctx = make_plugin(monkeypatch, tmp_path, {"targets": [MD_TARGET]})
+    monkeypatch.setattr(plugin, "_fetch", _const_fetcher(MD_DOC))
+    await plugin._check_all()
+    assert ctx.sent == []  # 首次只建基线，无总结、无提示
+    snap = (
+        plugin.snapshot_dir
+        / text.safe_name("md")
+        / f"{text.safe_name('https://example.com/doc.md')}.md"
+    )
+    saved = snap.read_text(encoding="utf-8")
+    # 整篇：标题与正文都在；且未被 MarkItDown 抹掉 # 号
+    assert "# Markdown 标题" in saved
+    assert "第一段正文" in saved
+
+
+async def test_check_one_markdown_change_notifies(monkeypatch, tmp_path):
+    """md 源内容变化：触发总结与推送。"""
+    plugin, ctx = make_plugin(monkeypatch, tmp_path, {"targets": [MD_TARGET]})
+    monkeypatch.setattr(plugin, "_fetch", _const_fetcher(MD_DOC))
+    await plugin._check_all()  # 建基线
+    ctx.sent.clear()
+    monkeypatch.setattr(plugin, "_fetch", _const_fetcher(MD_DOC + "\n\n新增的一行。"))
+    await plugin._check_all()
+    assert len(ctx.sent) == 1

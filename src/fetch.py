@@ -145,17 +145,136 @@ def extract_title(soup: BeautifulSoup) -> str:
     return ""
 
 
-def to_markdown(html: str, selector: str, tid: str) -> str:
-    """把 HTML 裁剪成正文并转成 Markdown。
+def is_markdown_url(url: str) -> bool:
+    """判断地址是否直接指向 Markdown 源。
+
+    去掉片段与查询串、去掉末尾斜杠后再看路径是否以 ``.md`` 结尾——
+    这样 ``https://x/y.md?token=1#z`` 与 ``https://x/y.md/`` 都能识别。
 
     Args:
-        html: 原始 HTML。
+        url: 目标地址。
+
+    Returns:
+        是 Markdown 源时返回 True。
+    """
+    if not url:
+        return False
+    core = url.split("#", 1)[0].split("?", 1)[0].rstrip("/")
+    return core.lower().endswith(".md")
+
+
+def looks_like_markdown(text: str) -> bool:
+    """判断抓到的文本是否像 Markdown/纯文本而非 HTML 错误页。
+
+    ``.md`` 源缺失时很多站点会回一个 HTML 404 页，这种不能当作 Markdown 源。
+    以 ``<!doctype`` / ``<html`` 开头的（忽略前导空白）一律视为 HTML 错误页。
+
+    Args:
+        text: 抓取到的原始文本。
+
+    Returns:
+        看起来是 Markdown/纯文本时返回 True。
+    """
+    t = text.lstrip().lower()
+    return not t.startswith(("<!doctype", "<html"))
+
+
+def extract_markdown_title(md_text: str, url: str) -> str:
+    """从 Markdown 源提取可读标题，供文档列表 / 通知展示。
+
+    回退链：frontmatter ``title:`` → 首个 ATX 标题（``# 标题``）→ URL 末段
+    （去掉 ``.md``），都没有返回空串。
+
+    Args:
+        md_text: Markdown 源文本。
+        url: 文档地址，仅用于兜底取末段。
+
+    Returns:
+        标题字符串，取不到时为空串。
+    """
+    if md_text:
+        stripped = md_text.lstrip("﻿")
+        if stripped.startswith("---"):
+            lines = stripped.splitlines()
+            end = None
+            for i in range(1, len(lines)):
+                if lines[i].strip() == "---":
+                    end = i
+                    break
+            if end is not None:
+                title = _parse_frontmatter_title("\n".join(lines[1:end]))
+                if title:
+                    return title
+        for line in md_text.splitlines():
+            m = re.match(r"^#{1,6}\s+(.+?)\s*#*$", line.strip())
+            if m:
+                return m.group(1).strip()
+    return _url_last_segment(url)
+
+
+def _parse_frontmatter_title(frontmatter: str) -> str:
+    """从 YAML frontmatter 文本里取 ``title`` 字段（去掉可选的引号包裹）。"""
+    for line in frontmatter.splitlines():
+        m = re.match(r"^title\s*:\s*(.+)$", line, re.IGNORECASE)
+        if m:
+            return m.group(1).strip().strip("\"'")
+    return ""
+
+
+def _url_last_segment(url: str) -> str:
+    """取 URL 路径末段（去掉 ``.md``）作为兜底标题。"""
+    from urllib.parse import urlparse
+
+    seg = urlparse(url).path.rstrip("/").split("/")[-1]
+    if seg.lower().endswith(".md"):
+        seg = seg[:-3]
+    return seg
+
+
+async def probe_markdown(
+    url: str, fetcher: Callable[[str], Awaitable[str]]
+) -> str | None:
+    """静默探测目标地址是否有对应的 ``.md`` 官方源。
+
+    仅当 ``url`` 本身不是 ``.md`` 时才探测 ``<url>.md``；探测失败（404 / 网络错 /
+    拿到的是 HTML 错误页）一律静默返回 ``None``，绝不影响主抓取流程。
+
+    Args:
+        url: 目标地址。
+        fetcher: 抓取函数，便于测试替换。
+
+    Returns:
+        拿到 Markdown 文本时返回该文本，否则返回 None。
+    """
+    if is_markdown_url(url):
+        return None
+    try:
+        text = await fetcher(url + ".md")
+    except Exception:  # noqa: BLE001 — 探测失败静默：不向上抛、不记日志刷屏
+        return None
+    if looks_like_markdown(text):
+        return text
+    return None
+
+
+def to_markdown(html: str, selector: str, tid: str, is_markdown: bool = False) -> str:
+    """把 HTML 裁剪成正文并转成 Markdown。
+
+    Markdown 源（``url`` 以 ``.md`` 结尾）抓到的已是 Markdown 原文，无需再经
+    MarkItDown 转换——否则会把 ``# 标题`` 等当 HTML 误转、还可能丢失原始结构。
+    此时 ``selector`` 无意义，直接整篇采用。
+
+    Args:
+        html: 原始 HTML，或 Markdown 源的原文（``is_markdown=True`` 时）。
         selector: 正文容器的 CSS 选择器，为空则使用整页。
         tid: 监控项 ID，仅用于日志。
+        is_markdown: 输入是否已是 Markdown 原文。
 
     Returns:
         Markdown 文本。
     """
+    if is_markdown:
+        return html
     soup = build_soup(html)
 
     if selector:
