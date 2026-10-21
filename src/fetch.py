@@ -213,7 +213,7 @@ def looks_like_markdown(text: str) -> bool:
     if t.startswith("{"):
         try:
             obj = json.loads(text.lstrip())
-        except (ValueError, json.JSONDecodeError):
+        except ValueError:  # json.JSONDecodeError 是 ValueError 的子类，单写即可
             return True
         if isinstance(obj, dict) and ("error" in obj or "message" in obj):
             return False
