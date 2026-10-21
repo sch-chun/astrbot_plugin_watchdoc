@@ -1095,12 +1095,19 @@ async function doFetch(url) {
       el.matchMeta.textContent = "";
       el.matchText.textContent = "Markdown 原文即监控内容（见上方预览）";
       el.matchCollapse.classList.remove("open");
-      el.pickCollapse.classList.remove("open");
+      // 保存文档按钮位於「选择器候选」面板内：Markdown 虽无需选区，仍需它把当前
+      // 文档加入列表，故保持该面板展开；同时隐藏与选区无关的空提示与候选，避免误导
+      el.pickCollapse.classList.add("open");
+      el.pickEmpty.style.display = "none";
+      el.candidates.innerHTML = "";
       el.saveDoc.disabled = false;
+      el.saveDoc.title = "整篇 Markdown 源，无需选区，点击保存文档";
       setStatus("已加载 Markdown 源（整篇监控，无需选区）", "success");
     } else {
       highlightMatches(currentSelector.trim());
       el.pick.disabled = false;
+      // 复位 Markdown 分支改过的提示文案，避免切回 HTML 源后残留「整篇 Markdown」措辞
+      el.saveDoc.title = "先选取一个区域（点选候选）再保存文档";
       // 没抓到页面就无从选区域、也无从判断监控什么，这两块先不露出来
       el.pickCollapse.classList.add("open");
       if (!data.textLength || data.textLength < 500) {
