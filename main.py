@@ -689,7 +689,7 @@ class WatchdocPlugin(Star):
         title = fetch.extract_title(soup)
         # 静默探测官方 .md 源：非 md 地址才探，命中则提示前端建议改用 .md
         md_text = await fetch.probe_markdown(url, self._fetch)
-        md_source = {"url": url + ".md"} if md_text is not None else None
+        md_source = {"url": fetch.md_variant(url)} if md_text is not None else None
         return json_response(
             {
                 "html": self._sanitize_for_preview(raw, url),
