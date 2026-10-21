@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import io
+import json
 import re
 from collections.abc import Awaitable, Callable
 from urllib.parse import urljoin
@@ -163,11 +164,41 @@ def is_markdown_url(url: str) -> bool:
     return core.lower().endswith(".md")
 
 
+def md_variant(url: str) -> str:
+    """把地址改写成对应的 ``.md`` 官方源候选地址。
+
+    裸拼 ``<url>.md`` 在带查询串或末尾斜杠时会拼错，这里正确处理二者——前端会
+    把结果直接展示给用户复制填写，拼错等于把人往坑里带：
+      https://x/y?id=1   -> https://x/y.md?id=1
+      https://x/y/       -> https://x/y.md
+    已是 ``.md`` 源时原样返回（调用方本就不会对 md 源再探，这里只是防御）。
+
+    Args:
+        url: 原始（非 Markdown）地址。
+
+    Returns:
+        探测用的 ``.md`` 候选地址。
+    """
+    if is_markdown_url(url):
+        return url
+    frag = ""
+    if "#" in url:
+        url, frag = url.split("#", 1)
+        frag = "#" + frag
+    query = ""
+    if "?" in url:
+        url, query = url.split("?", 1)
+        query = "?" + query
+    return url.rstrip("/") + ".md" + query + frag
+
+
 def looks_like_markdown(text: str) -> bool:
     """判断抓到的文本是否像 Markdown/纯文本而非 HTML 错误页。
 
     ``.md`` 源缺失时很多站点会回一个 HTML 404 页，这种不能当作 Markdown 源。
-    以 ``<!doctype`` / ``<html`` 开头的（忽略前导空白）一律视为 HTML 错误页。
+    以 ``<!doctype`` / ``<html`` / ``<?xml`` / ``<head`` / ``<!--`` 开头的
+    （忽略前导空白）一律视为 HTML 错误页；另挡一层 JSON 错误响应
+    （``{"error": ...}`` / ``{"message": ...}``），否则会被误当成 md 源、前端误提示。
 
     Args:
         text: 抓取到的原始文本。
@@ -176,7 +207,17 @@ def looks_like_markdown(text: str) -> bool:
         看起来是 Markdown/纯文本时返回 True。
     """
     t = text.lstrip().lower()
-    return not t.startswith(("<!doctype", "<html"))
+    if t.startswith(("<!doctype", "<html", "<?xml", "<head", "<!--")):
+        return False
+    # JSON 错误响应（如 {"error": "not found"}）不是 Markdown 源
+    if t.startswith("{"):
+        try:
+            obj = json.loads(text.lstrip())
+        except (ValueError, json.JSONDecodeError):
+            return True
+        if isinstance(obj, dict) and ("error" in obj or "message" in obj):
+            return False
+    return True
 
 
 def extract_markdown_title(md_text: str, url: str) -> str:
@@ -205,7 +246,7 @@ def extract_markdown_title(md_text: str, url: str) -> str:
                 title = _parse_frontmatter_title("\n".join(lines[1:end]))
                 if title:
                     return title
-        for line in md_text.splitlines():
+        for line in stripped.splitlines():
             m = re.match(r"^#{1,6}\s+(.+?)\s*#*$", line.strip())
             if m:
                 return m.group(1).strip()
@@ -249,7 +290,7 @@ async def probe_markdown(
     if is_markdown_url(url):
         return None
     try:
-        text = await fetcher(url + ".md")
+        text = await fetcher(md_variant(url))
     except Exception:  # noqa: BLE001 — 探测失败静默：不向上抛、不记日志刷屏
         return None
     if looks_like_markdown(text):
@@ -274,7 +315,8 @@ def to_markdown(html: str, selector: str, tid: str, is_markdown: bool = False) -
         Markdown 文本。
     """
     if is_markdown:
-        return html
+        # 真碰上带 BOM 的源，不剥干净会让快照首行带 ﻿，diff 一直误报变更
+        return html.lstrip("﻿")
     soup = build_soup(html)
 
     if selector:

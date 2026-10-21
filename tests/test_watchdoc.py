@@ -2703,6 +2703,60 @@ def test_looks_like_markdown():
     assert fetch.looks_like_markdown("  \n  <html><body>x</body></html>") is False
 
 
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        ("https://x.com/a", "https://x.com/a.md"),
+        ("https://x.com/a/", "https://x.com/a.md"),  # 末尾斜杠：最常见
+        ("https://x.com/a?id=1", "https://x.com/a.md?id=1"),  # query 移到 .md 之后
+        ("https://x.com/a/?id=1", "https://x.com/a.md?id=1"),
+        ("https://x.com/a#sec", "https://x.com/a.md#sec"),
+        ("https://x.com/a.md", "https://x.com/a.md"),  # 已是 md 源：原样返回（防御）
+    ],
+)
+def test_md_variant(url, expected):
+    assert fetch.md_variant(url) == expected
+
+
+def test_looks_like_markdown_rejects_non_html_noise():
+    # P3：挡住 XML / HTML 注释 / head 开头 与 JSON 错误响应，避免误判成 md 源
+    assert fetch.looks_like_markdown('<?xml version="1.0"?><error/>') is False
+    assert fetch.looks_like_markdown("<!-- 404 Not Found -->") is False
+    assert fetch.looks_like_markdown("<head><title>x</title></head>") is False
+    assert fetch.looks_like_markdown('{"error": "not found"}') is False
+    assert fetch.looks_like_markdown('{"message": "No such page"}') is False
+    # 合法 JSON 但没有 error/message 键时仍当作纯文本（极端兜底）
+    assert fetch.looks_like_markdown('{"a": 1}') is True
+
+
+def test_extract_markdown_title_bom_without_frontmatter():
+    # P2：带 BOM 又无 frontmatter 时，首行 ﻿# 标题 仍应被 ATX 正则命中
+    md = "﻿# 带 BOM 的标题\n\n正文"
+    assert fetch.extract_markdown_title(md, "https://x.com/a.md") == "带 BOM 的标题"
+
+
+def test_to_markdown_markdown_strips_bom():
+    # P3：整篇返回前剥掉 BOM，否则快照首行带 ﻿ 会一直误报变更
+    raw = "﻿# 标题\n\n正文"
+    assert (
+        fetch.to_markdown(raw, "ignored", "tid", is_markdown=True) == "# 标题\n\n正文"
+    )
+
+
+async def test_probe_markdown_variant_handles_query_and_trailing_slash():
+    seen = {}
+
+    async def _f(u):
+        seen["url"] = u
+        return "# 官方源\n\n内容"
+
+    assert await fetch.probe_markdown("https://x.com/a/", _f) == "# 官方源\n\n内容"
+    assert seen["url"] == "https://x.com/a.md"
+    seen.clear()
+    assert await fetch.probe_markdown("https://x.com/a?id=1", _f) == "# 官方源\n\n内容"
+    assert seen["url"] == "https://x.com/a.md?id=1"
+
+
 def test_extract_markdown_title_frontmatter():
     md = "---\ntitle: 官方文档\n---\n# 标题\n正文"
     assert fetch.extract_markdown_title(md, "https://x.com/a.md") == "官方文档"
