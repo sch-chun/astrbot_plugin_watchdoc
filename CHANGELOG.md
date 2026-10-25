@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [Unreleased]
+
+### Added
+
+- **Markdown 源「技术文档」渲染视图**：配置页抓取 `.md` 地址后，预览区默认以排版好的技术文档样式渲染——标题层级、有序 / 无序列表（含嵌套）、围栏代码块（带语言标注）、GFM 表格（含对齐）、引用、分割线，以及行内代码 / 粗体 / 斜体 / 删除线 / 链接 / 图片 / 自动链接——不再只是带 `#`、`*` 符号的原文。预览右上角新增「渲染 / 原文」切换开关：「原文」视图展示归一化前将被监控的文本，与后端快照一致；两份视图都从已抓到的原文本地生成，切换不重新请求。渲染在 Page 本地完成：新增无第三方依赖的渲染模块 `pages/designer/mdrender.js`，原文一律转义、链接与图片地址走白名单（http(s) / mailto / 站内相对地址 / 锚点 / base64 图片，挡住 `javascript:` 等可执行 scheme），远程 Markdown 按不可信来源处理；后端预览接口对 `.md` 源新增返回 `markdown` 原文字段（既有 `html` 转义兜底字段保留）。预览区内点击链接不再跳转（避免沙箱 iframe 被导航），地址可在「原文」视图中核对。
+
 ## [0.2.1] - 2026-10-21
 
 ### Added

@@ -2823,6 +2823,18 @@ async def test_api_preview_markdown(monkeypatch, tmp_path):
     assert body["mdSource"] is None
 
 
+async def test_api_preview_markdown_returns_raw_text(monkeypatch, tmp_path):
+    """预览 .md 源应同时带回 markdown 原文字段，供前端渲染「技术文档」视图。"""
+    plugin, _ = make_plugin(monkeypatch, tmp_path, {"targets": []})
+    monkeypatch.setattr(plugin, "_fetch", _const_fetcher(MD_DOC))
+    resp = await _call_preview(plugin, "https://x.com/doc.md")
+    body = json.loads(resp.body)
+    assert body["isMarkdown"] is True
+    assert body["markdown"] == MD_DOC
+    # 既有 html 兜底字段不能丢：前端拿不到 markdown 时仍可展示转义后的原文
+    assert "Markdown 标题" in body["html"]
+
+
 async def test_api_preview_md_source_hint(monkeypatch, tmp_path):
     """预览非 md 地址且探到官方 .md 源时，响应带 mdSource。"""
     plugin, _ = make_plugin(monkeypatch, tmp_path, {"targets": []})
@@ -2837,6 +2849,8 @@ async def test_api_preview_md_source_hint(monkeypatch, tmp_path):
     body = json.loads(resp.body)
     assert body["isMarkdown"] is False
     assert body["mdSource"] == {"url": "https://x.com/doc.md"}
+    # markdown 原文字段只属于 .md 源响应，HTML 预览不应出现
+    assert "markdown" not in body
 
 
 MD_TARGET = {

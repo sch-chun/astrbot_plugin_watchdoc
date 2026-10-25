@@ -1,3 +1,5 @@
+import { MD_CSS, mdSourceHtml, renderMarkdown } from "./mdrender.js";
+
 const bridge = window.AstrBotPluginPage;
 
 const el = {
@@ -40,6 +42,9 @@ const el = {
   confirmOk: document.getElementById("confirm-ok"),
   confirmCancel: document.getElementById("confirm-cancel"),
   matchCollapse: document.getElementById("match-collapse"),
+  mdToggle: document.getElementById("md-view-toggle"),
+  mdViewDoc: document.getElementById("md-view-doc"),
+  mdViewSource: document.getElementById("md-view-source"),
 };
 
 let targets = [];
@@ -73,6 +78,10 @@ let currentSelector = "";
 let currentTitle = "";
 // 当前抓取地址是否为 Markdown 源（后端 isMarkdown）：是则整篇监控、无需选择器
 let currentIsMarkdown = false;
+// 当前抓取的 Markdown 原文（isMarkdown 时非空）：渲染视图与原文视图共用，切换不重新抓取
+let currentMarkdown = "";
+// Markdown 源预览视图："doc"=技术文档渲染视图（默认），"source"=将被监控的原文
+let mdView = "doc";
 
 // 与后端 fetch.is_markdown_url 对齐：去掉片段/查询串、去末尾斜杠后看是否以 .md 结尾
 function isMarkdownUrl(url) {
@@ -306,7 +315,9 @@ function renderPreview(html) {
   // 底色那两行：只描边时，元素边界常被相邻元素盖住看不出来，加半透明蒙版才看得出范围。
   // 先给一个写死的 rgba 兜底，支持 color-mix 的浏览器再用主题色覆盖。
   const style = document.createElement("style");
+  // MD_CSS 是 Markdown 文档视图样式：文档级样式表穿不进 shadow 边界，必须随预览一并注入
   style.textContent =
+    MD_CSS +
     ".watchdoc-match{outline:2px solid var(--accent,#1d9e75)!important;" +
     "outline-offset:1px;" +
     "background:rgba(29,158,117,.18)!important;" +
@@ -314,6 +325,24 @@ function renderPreview(html) {
   shadow.appendChild(style);
   shadow.addEventListener("mouseover", onHover);
   shadow.addEventListener("click", onClick, true);
+}
+
+/* ---------- Markdown 源预览 ---------- */
+
+// 技术文档渲染视图 / 原文视图切换：两份视图都由已抓到的 currentMarkdown 本地生成，
+// 不重新请求后端。原文视图展示的是归一化前将被监控的文本，与后端快照一致。
+function renderMdPreview() {
+  renderPreview(
+    mdView === "source" ? mdSourceHtml(currentMarkdown) : renderMarkdown(currentMarkdown),
+  );
+  syncMdToggle();
+}
+
+function syncMdToggle() {
+  const on = currentIsMarkdown && !!currentMarkdown;
+  el.mdToggle.hidden = !on;
+  el.mdViewDoc.classList.toggle("on", mdView === "doc");
+  el.mdViewSource.classList.toggle("on", mdView === "source");
 }
 
 // 把选择器命中的元素在预览里圈出来，让人一眼看出有没有点对。
@@ -373,6 +402,9 @@ function onHover(event) {
 }
 
 function onClick(event) {
+  // 预览内的链接不跳转：沙箱 iframe 被导航会把配置页本身换掉，原文视图可核对地址
+  const anchor = event.target instanceof Element ? event.target.closest("a") : null;
+  if (anchor) event.preventDefault();
   if (!selecting) return;
   event.preventDefault();
   event.stopPropagation();
@@ -629,6 +661,10 @@ function fillForm(item) {
   // 选中监控项即展开表单面板（不再依赖自动抓取触发 showForm）；
   // 预览/候选/命中面板保持未加载态，避免展示上一次抓取的残留内容误导
   el.preview.innerHTML = "";
+  currentIsMarkdown = false;
+  currentMarkdown = "";
+  mdView = "doc";
+  syncMdToggle();
   el.pickCollapse.classList.remove("open");
   el.matchCollapse.classList.remove("open");
   showForm();
@@ -666,6 +702,8 @@ function resetPage() {
   el.pick.disabled = true;
   el.pick.textContent = "选取区域";
   currentIsMarkdown = false;
+  currentMarkdown = "";
+  mdView = "doc";
   setStatus("");
   el.hint.textContent = INITIAL.hint;
   el.pickEmpty.style.display = "";
@@ -690,6 +728,7 @@ function resetPage() {
   setFormMode("");
   renderSessionOptions(); // 回到「新建」：无当前项，所有被用会话都置顶
   renderDocList();
+  syncMdToggle();
   renderList();
 }
 
@@ -722,6 +761,10 @@ function loadDraftDoc() {
     doFetch(url);
   } else {
     el.preview.innerHTML = "";
+    currentIsMarkdown = false;
+    currentMarkdown = "";
+    mdView = "doc";
+    syncMdToggle();
     el.pickCollapse.classList.remove("open");
   }
   renderDocList();
@@ -738,6 +781,9 @@ function startNewDoc() {
   el.url.value = "";
   el.preview.innerHTML = "";
   currentIsMarkdown = false;
+  currentMarkdown = "";
+  mdView = "doc";
+  syncMdToggle();
   animateList(el.candidates, () => {
     el.candidates.innerHTML = "";
   });
@@ -773,6 +819,9 @@ function saveCurrentDoc() {
   currentTitle = "";
   el.saveDoc.disabled = true; // 已无选中区域，按钮重新变灰，引导先点选
   el.preview.innerHTML = "";
+  currentMarkdown = "";
+  mdView = "doc";
+  syncMdToggle();
   animateList(el.candidates, () => {
     el.candidates.innerHTML = "";
   });
@@ -1069,8 +1118,16 @@ async function doFetch(url) {
   el.preview.style.opacity = "0";
   try {
     const data = await bridge.apiGet("preview", { url });
-    renderPreview(data.html);
     currentIsMarkdown = !!(data && data.isMarkdown);
+    currentMarkdown = currentIsMarkdown ? String((data && data.markdown) || "") : "";
+    if (currentIsMarkdown && currentMarkdown) {
+      // Markdown 源：默认以「技术文档」版式渲染，可切「原文」核对将被监控的文本
+      mdView = "doc";
+      renderMdPreview();
+    } else {
+      renderPreview(data.html);
+    }
+    syncMdToggle();
     // 新抓的页面与上一页无关：清掉上一轮点选区留下的候选、空提示复位、提示语回初始，
     // 否则换链接再抓，旧候选仍挂在列表、空提示被永久隐藏，误导用户以为还能用
     // 候选面板此刻可能正开着（上一轮点选过），裸清会「啪」地空掉——包进 animateList 收起过渡
@@ -1093,7 +1150,7 @@ async function doFetch(url) {
       el.pick.disabled = true;
       el.selectorHint.textContent = "Markdown 源：已自动整篇监控，无需选取区域";
       el.matchMeta.textContent = "";
-      el.matchText.textContent = "Markdown 原文即监控内容（见上方预览）";
+      el.matchText.textContent = "Markdown 原文即监控内容（点预览右上角「原文」可查看）";
       el.matchCollapse.classList.remove("open");
       // 保存文档按钮位於「选择器候选」面板内：Markdown 虽无需选区，仍需它把当前
       // 文档加入列表，故保持该面板展开；同时隐藏与选区无关的空提示与候选，避免误导
@@ -1102,6 +1159,8 @@ async function doFetch(url) {
       el.candidates.innerHTML = "";
       el.saveDoc.disabled = false;
       el.saveDoc.title = "整篇 Markdown 源，无需选区，点击保存文档";
+      el.hint.textContent =
+        "Markdown 源已按技术文档渲染；监控的是整篇原文，点预览右上角可切到「原文」核对。";
       setStatus("已加载 Markdown 源（整篇监控，无需选区）", "success");
     } else {
       highlightMatches(currentSelector.trim());
@@ -1155,6 +1214,21 @@ el.url.addEventListener("keydown", (e) => {
 
 el.saveDoc.addEventListener("click", saveCurrentDoc);
 el.addDoc.addEventListener("click", startNewDoc);
+
+// Markdown 源视图切换：渲染 / 原文，两份视图都从已抓到的原文本地生成，不重新请求
+el.mdViewDoc.addEventListener("click", () => {
+  if (currentIsMarkdown && currentMarkdown && mdView !== "doc") {
+    mdView = "doc";
+    renderMdPreview();
+  }
+});
+
+el.mdViewSource.addEventListener("click", () => {
+  if (currentIsMarkdown && currentMarkdown && mdView !== "source") {
+    mdView = "source";
+    renderMdPreview();
+  }
+});
 
 el.pick.addEventListener("click", () => {
   selecting = !selecting;

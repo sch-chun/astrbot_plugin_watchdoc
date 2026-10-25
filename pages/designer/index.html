@@ -20,6 +20,11 @@
       <section class="preview-wrap">
         <div class="preview-stage">
           <div id="preview" class="preview-host"></div>
+          <!-- Markdown 源视图切换：抓取 .md 后浮现在预览区右上角，「渲染」=技术文档版式，「原文」=将被监控的文本 -->
+          <div id="md-view-toggle" class="md-view-toggle" hidden>
+            <button type="button" id="md-view-doc" class="on">渲染</button>
+            <button type="button" id="md-view-source">原文</button>
+          </div>
           <div id="preview-loading" class="loading">
             <div class="spinner"></div>
             <span>正在抓取…</span>

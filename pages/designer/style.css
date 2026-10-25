@@ -369,7 +369,8 @@ html[data-booting] .layout {
   background: var(--glass-bg);
 }
 
-/* Markdown 源预览：原样展示将被监控的 Markdown 文本 */
+/* Markdown 源预览：原样展示将被监控的 Markdown 文本（规则同时注入预览 shadow root，
+   文档级样式表穿不进 shadow 边界；此处保留一份供潜在的非 shadow 使用） */
 .md-source {
   margin: 0;
   padding: 12px;
@@ -379,6 +380,51 @@ html[data-booting] .layout {
   font-size: 13px;
   line-height: 1.6;
   color: var(--text);
+}
+
+/* Markdown 源视图切换：浮在预览区右上角，仅抓取 .md 后显示（hidden 由 JS 控制）。
+   与顶栏同款半透明 + 毛玻璃，不抢预览内容 */
+.md-view-toggle {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+}
+
+/* display:flex 会盖掉 [hidden] 的 UA display:none，必须显式复位 */
+.md-view-toggle[hidden] {
+  display: none;
+}
+
+.md-view-toggle button {
+  padding: 3px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.md-view-toggle button:hover:not(.on) {
+  color: var(--accent);
+}
+
+.md-view-toggle button.on {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+[data-theme="dark"] .md-view-toggle button.on {
+  color: #04251c;
 }
 
 .side {
