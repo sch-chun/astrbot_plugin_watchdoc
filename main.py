@@ -657,7 +657,9 @@ class WatchdocPlugin(Star):
         """抓取页面并返回清洗后的 HTML 供 Page 渲染。
 
         对 Markdown 源（``url`` 以 ``.md`` 结尾）做整篇适配：直接渲染原文、
-        返回 ``isMarkdown=true`` 与 Markdown 标题，前端据此自动整篇监控、无需选择器。
+        返回 ``isMarkdown=true`` 与 Markdown 标题，前端据此自动整篇监控、无需选择器；
+        同时返回 ``markdown`` 原文字段，供前端以「技术文档」版式渲染（渲染在
+        Page 本地完成，不走后端）。
         对非 Markdown 地址静默探测官方 ``.md`` 源，命中则在响应带 ``mdSource`` 提示前端。
         """
         url = request.query.get("url", "")
@@ -674,10 +676,13 @@ class WatchdocPlugin(Star):
         if is_md:
             # 已是 Markdown 原文：整篇监控，无需选择器。escaped 后放进 <pre> 交给
             # 既有 Shadow 渲染管线，用户能直接看到将被监控的内容。
+            # markdown 字段额外带回原文，供前端渲染成「技术文档」视图（默认）；
+            # html 字段保留 <pre> 形态，作为「原文」视图的后端兜底。
             preview_html = f'<pre class="md-source">{html.escape(raw)}</pre>'
             return json_response(
                 {
                     "html": preview_html,
+                    "markdown": raw,
                     "textLength": len(raw),
                     "title": fetch.extract_markdown_title(raw, url),
                     "isMarkdown": True,
