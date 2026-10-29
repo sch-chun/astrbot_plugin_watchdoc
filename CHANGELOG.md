@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.2.3] - 2026-10-30
+
+### Fixed
+
+- **Markdown 源预览渲染两类官方 `.md` 源构造失败**：① 围栏语言后带附加属性时整段退化成纯文本——部分官方文档站（如 Mintlify 产出的 ` ```python theme={null} `）会在语言标识后追加 `theme={null}` 等属性，原 `FENCE_RE` 因多余 token 匹配失败、代码块被当普通段落转义。现仅取首个空白前片段作语言、忽略其后附加属性。② 内联 `<video>` / `<audio>` 媒体标签被安全模型整段转义成文字——新增独立媒体标签渲染：仅当 `src` 命中 http(s) 白名单时输出 `<video controls src="…">` / `<audio controls src="…">`（丢弃 `autoplay` / `loop` 等），`javascript:` 等非法 src 回落到转义文本，远程 Markdown 不可信的信任模型不变。MiniMax 等官方 `.md` 源现可正常预览代码块与试听音频。
+
 ## [0.2.2] - 2026-10-25
 
 ### Added

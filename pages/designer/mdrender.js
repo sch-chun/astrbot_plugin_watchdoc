@@ -2,8 +2,10 @@
  * Watchdoc 配置页专用 Markdown 渲染器（无第三方依赖）。
  *
  * 只覆盖技术文档的主流语法子集：ATX 标题、段落、有序 / 无序列表（支持一级嵌套）、
- * 围栏代码块、GFM 表格、引用、分割线，以及行内的代码 / 粗体 / 斜体 / 删除线 /
- * 链接 / 图片 / 自动链接。YAML frontmatter 只用于标题识别，渲染时整段剥掉。
+ * 围栏代码块（语言后允许附加属性，如 Mintlify 的 `theme={null}`）、GFM 表格、引用、
+ * 分割线，独立的 `<video>` / `<audio>` 媒体标签（src 受限白名单），以及行内的代码 /
+ * 粗体 / 斜体 / 删除线 / 链接 / 图片 / 自动链接。YAML frontmatter 只用于标题识别，
+ * 渲染时整段剥掉。
  *
  * 安全模型：远程 Markdown 不可信。原文一律先转义，渲染器只输出自身产生的标签；
  * 链接 / 图片地址走白名单（http(s) / mailto / 站内相对地址 / 锚点 / base64 图片），
@@ -40,8 +42,10 @@ function safeUrl(escapedUrl) {
   return SAFE_URL_RE.test(compact) ? escapedUrl : "";
 }
 
-// 围栏代码块起始：行首 3+ 个反引号或波浪线，可带语言标识（CommonMark 允许 ~~~ 与变长围栏）
-const FENCE_RE = /^(`{3,}|~{3,})(\w*)\s*$/;
+// 围栏代码块起始：行首 3+ 个反引号或波浪线，可带语言标识。
+// 仅取首个空白前片段作为语言，忽略其后附加属性（部分官方 .md 源会追加，
+// 如 Mintlify 产出的 ` ```python theme={null} `），避免整段围栏因多余 token 匹配失败。
+const FENCE_RE = /^(`{3,}|~{3,})(?:(\S+)(?:\s.*)?)?\s*$/;
 // 收尾围栏：同字符、不短于起始、不带 info string
 const FENCE_CLOSE_RE = /^(`{3,}|~{3,})\s*$/;
 
@@ -250,6 +254,31 @@ function inline(text) {
   return src;
 }
 
+/**
+ * 渲染独立的 <video> / <audio> 媒体标签（部分官方 .md 源会直接内联，如 MiniMax 文档）。
+ *
+ * 安全模型：仅当 src 命中 http(s) 白名单时才输出可播放元素，其余属性（autoplay / loop
+ * 等）一律丢弃，不执行任何脚本；非白名单或解析失败则回落到默认转义（按普通文本显示）。
+ *
+ * Args:
+ *   line: 待判断的单行原始文本（未转义）。
+ *
+ * Returns:
+ *   渲染后的安全媒体 HTML；不是合法媒体标签则返回 null。
+ */
+function renderMediaLine(line) {
+  const m = line.match(/^\s*<(video|audio)\b([^>]*?)\/?>\s*$/i);
+  if (!m) return null;
+  const tag = m[1].toLowerCase();
+  const attrs = m[2];
+  const srcMatch = attrs.match(/\bsrc\s*=\s*("([^"]*)"|'([^']*)')/i);
+  if (!srcMatch) return null;
+  const rawSrc = srcMatch[2] ?? srcMatch[3];
+  // 仅放行 http(s)；data: 媒体不在此支持，避免过大内联与潜在滥用
+  if (!/^https?:\/\//i.test(rawSrc)) return null;
+  return `<${tag} controls src="${escapeHtml(rawSrc)}"></${tag}>`;
+}
+
 /** 当前行是否会开启一个新块（段落收集到这些行为止）。 */
 function isBlockStart(line, next) {
   if (FENCE_RE.test(line) || HEADING_RE.test(line) || HR_RE.test(line)) return true;
@@ -322,6 +351,13 @@ function renderBlocks(lines) {
       const [html, next] = parseList(lines, i);
       out.push(html);
       i = next;
+      continue;
+    }
+    // 独立媒体标签（部分官方 .md 源内联 <video>/<audio>，如 MiniMax 文档）
+    const media = renderMediaLine(line);
+    if (media) {
+      out.push(media);
+      i++;
       continue;
     }
     // 段落：连续非空行接到一段，行间折行以空格连接（技术文档的硬折行多为一句话拆行）
