@@ -42,11 +42,17 @@ function safeUrl(escapedUrl) {
   return SAFE_URL_RE.test(compact) ? escapedUrl : "";
 }
 
-// 围栏代码块起始：行首 3+ 个反引号或波浪线，可带语言标识。
-// 仅取首个空白前片段作为语言（限定为 [A-Za-z0-9_+#.-]+，避免 ` ```{=html} ` 被
-// 当成 language-{=html}），忽略其后附加属性（部分官方 .md 源会追加，如 Mintlify
-// 产出的 ` ```python theme={null} `），避免整段围栏因多余 token 匹配失败。
-const FENCE_RE = /^(`{3,}|~{3,})(?:([A-Za-z0-9_+#.\-]+)(?:\s.*)?)?\s*$/;
+// 围栏代码块起始：行首 3+ 个反引号或波浪线，可带 info string。
+// 匹配与赋值分离（v0.2.4 初版把语言直接写进正则字符类，导致 ` ```{=html} ` 整行
+// 匹配失败、退化成「段落转义 + 空 <pre>」壳）：这里正则放宽——info string 允许
+// 前导空白（CommonMark 允许 ` ``` python ` 这种写法）并捕获首个非空词，其后的
+// 附加属性（如 Mintlify 产出的 ` ```python theme={null} `）整体忽略；赋值处再用
+// LANG_RE 白名单收紧，只把合法语言标识当作类名。这样 ` ```{=html} ` 仍被正确识别
+// 为代码块（只是不出 language-{=html} 类），` ``` python ` 也照常工作。
+const FENCE_RE = /^(`{3,}|~{3,})\s*(\S+)?(?:\s.*)?\s*$/;
+// 语言标识白名单：仅 [A-Za-z0-9_+#.-]+ 才当作代码块语言类名，其余（如 {=html}）
+// 一律视为无语言。
+const LANG_RE = /^[A-Za-z0-9_+#.\-]+$/;
 // 收尾围栏：同字符、不短于起始、不带 info string
 const FENCE_CLOSE_RE = /^(`{3,}|~{3,})\s*$/;
 
@@ -256,19 +262,21 @@ function inline(text) {
 }
 
 /**
- * 媒体标签匹配：支持三种官方 .md 源写法——自闭合 `<video ... />`、同行闭合
- * `<video ...></video>`、以及多格式回退 `<video><source src=...></video>`。
- * 仅整行即媒体标签时才匹配（前后无其它文本），避免误吞行内片段。
+ * 媒体标签匹配：整行即一个 <video>/<audio> 元素——自闭合 `<video ... />`、同行闭合
+ * `<video ...></video>`、或带若干 `<source>` 子标签的多格式回退。仅整行匹配，避免
+ * 误吞行内片段。捕获外层标签属性（group 2）与标签内部内容（group 3），由
+ * renderMediaLine 决定是从 <source> 子标签还是外层 src 取地址。
  */
-const MEDIA_RE =
-  /^\s*<(video|audio)\b([^>]*)>(?:\s*<source\b([^>]*)>)?\s*(?:<\/\1>)?\s*$/i;
+const MEDIA_RE = /^\s*<(video|audio)\b([^>]*)>([\s\S]*?)(?:<\/\1>)?\s*$/i;
 const SRC_RE = /\bsrc\s*=\s*("([^"]*)"|'([^']*)')/i;
 
 /**
  * 渲染独立的 <video> / <audio> 媒体标签（部分官方 .md 源会直接内联，如 MiniMax 文档）。
  *
- * 兼容三种写法（见 MEDIA_RE）：自闭合、同行闭合、`<source>` 子标签多格式回退；
- * 任一写法都能渲染，避免「依赖 <source> 子标签时修复静默失效」。
+ * 兼容三种官方 .md 源写法——自闭合、同行闭合、以及带若干 `<source>` 子标签的多格式
+ * 回退（如 `<video><source src="a.mp4"><source src="b.webm"></video>`，常见写法就是
+ * 两三个 source）。优先采用 `<source>` 子标签（多格式回退时浏览器自动选首个可播放者），
+ * 没有子标签才退回外层标签的 src；任一写法都能渲染。
  * 安全模型：仅当 src 命中 http(s) 白名单时才输出可播放元素，其余属性（autoplay / loop
  * 等）一律丢弃，不执行任何脚本；非白名单或解析失败则回落到默认转义（按普通文本显示）。
  *
@@ -282,13 +290,32 @@ function renderMediaLine(line) {
   const m = line.match(MEDIA_RE);
   if (!m) return null;
   const tag = m[1].toLowerCase();
-  // src 取自外层标签或 <source> 子标签，二者皆无则回落到转义文本
-  const srcMatch = (m[2] && m[2].match(SRC_RE)) || (m[3] && m[3].match(SRC_RE));
-  if (!srcMatch) return null;
-  const rawSrc = srcMatch[2] ?? srcMatch[3];
-  // 仅放行 http(s)；data: 媒体不在此支持，避免过大内联与潜在滥用
-  if (!/^https?:\/\//i.test(rawSrc)) return null;
-  return `<${tag} controls src="${escapeHtml(rawSrc)}"></${tag}>`;
+  const inner = m[3] || "";
+  // 先收集所有 <source> 子标签里的 http(s) src（多格式回退常见写法）
+  const sourceSrcs = [];
+  const sourceRe = /<source\b[^>]*>/gi;
+  let srcTag;
+  while ((srcTag = sourceRe.exec(inner)) !== null) {
+    const sm = srcTag[0].match(SRC_RE);
+    if (!sm) continue;
+    const raw = sm[2] ?? sm[3];
+    if (/^https?:\/\//i.test(raw)) sourceSrcs.push(raw);
+  }
+  if (sourceSrcs.length > 0) {
+    const sources = sourceSrcs
+      .map((src) => `<source src="${escapeHtml(src)}">`)
+      .join("");
+    return `<${tag} controls>${sources}</${tag}>`;
+  }
+  // 无 <source> 子标签：退回外层标签自身的 src
+  const outer = (m[2] || "").match(SRC_RE);
+  if (outer) {
+    const raw = outer[2] ?? outer[3];
+    if (/^https?:\/\//i.test(raw)) {
+      return `<${tag} controls src="${escapeHtml(raw)}"></${tag}>`;
+    }
+  }
+  return null;
 }
 
 /** 当前行是否会开启一个新块（段落收集到这些行为止）。 */
@@ -313,7 +340,9 @@ function renderBlocks(lines) {
     const fence = line.match(FENCE_RE);
     if (fence) {
       const marker = fence[1];
-      const lang = fence[2] || "";
+      // 赋值处用 LANG_RE 收紧：放宽后捕获的语言片段若不在白名单内（如 {=html}），
+      // 视为无语言，避免生成 language-{=html} 这类无意义类名
+      const lang = fence[2] && LANG_RE.test(fence[2]) ? fence[2] : "";
       const buf = [];
       i++;
       // 收尾须同字符且不短于起始：块内更短的同字符行（如 4 重围栏里的 ```）

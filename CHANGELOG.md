@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 
 ### Fixed
 
-- **mdrender 媒体标签兼容更多官方 `.md` 源写法**：原 `renderMediaLine` 仅匹配自闭合 `<video ... />`，遇到同行闭合 `<video ...></video>` 或 `<video><source src=...></video>` 多格式回退会静默回退成转义文本（修复形同虚设）。现统一三种写法均可渲染；`<video>` / `<audio>` 的 `src` 仍仅放行 http(s) 白名单，`javascript:` 等非法 src 回落转义（XSS 不变量不变）。
-- **围栏语言识别收紧**：语言标识限定为 `[A-Za-z0-9_+#.-]+`，避免 ` ```{=html} ` 被识别成无意义的 `language-{=html}` 类名。
+- **mdrender 媒体标签兼容更多官方 `.md` 源写法**：原 `renderMediaLine` 仅匹配自闭合 `<video ... />`，同行闭合 `<video ...></video>` 与 `<source>` 子标签多格式回退会静默回退成转义文本（修复形同虚设）。现统一三种写法均可渲染，且**支持多个 `<source>`**（如 `a.mp4` + `b.webm` 双格式回退，浏览器自动选首个可播放者）；`<video>` / `<audio>` 的 `src` 仍仅放行 http(s) 白名单，`javascript:` 等非法 src 回落转义（XSS 不变量不变）。
+- **围栏代码块匹配与赋值分离**：原围栏正则把语言直接写进字符类（`[A-Za-z0-9_+#.-]+`），导致 ` ```{=html} ` 整行匹配失败、退化成「段落转义 + 空 `<pre>` 壳」，` ``` python `（CommonMark 允许的 info string 前导空格）同样整体坏掉。现放宽正则捕获 info string 首个非空词、忽略其后附加属性（如 Mintlify 的 ` ```python theme={null} `），赋值处再用白名单收紧——仅合法语言标识生成 `lang-*` 类名，`{=html}` 仍被正确渲染为代码块（只是无语言类）。
 
 ### Added
 
