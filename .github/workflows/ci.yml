@@ -24,3 +24,14 @@ jobs:
       - name: Version consistency
         # README 徽标 / metadata.yaml / CHANGELOG 三处版本必须一致（见评审 P1）
         run: python scripts/check_version.py
+
+  js-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Run mdrender unit tests
+        # 覆盖围栏属性容忍、媒体标签三种写法与非法 src 回落（零新依赖，Node 内置 test runner）
+        run: node --test tests/mdrender.test.mjs

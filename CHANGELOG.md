@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.2.4] - 2026-10-30
+
+### Fixed
+
+- **mdrender 媒体标签兼容更多官方 `.md` 源写法**：原 `renderMediaLine` 仅匹配自闭合 `<video ... />`，遇到同行闭合 `<video ...></video>` 或 `<video><source src=...></video>` 多格式回退会静默回退成转义文本（修复形同虚设）。现统一三种写法均可渲染；`<video>` / `<audio>` 的 `src` 仍仅放行 http(s) 白名单，`javascript:` 等非法 src 回落转义（XSS 不变量不变）。
+- **围栏语言识别收紧**：语言标识限定为 `[A-Za-z0-9_+#.-]+`，避免 ` ```{=html} ` 被识别成无意义的 `language-{=html}` 类名。
+
+### Added
+
+- **mdrender 单元测试**：新增 `tests/mdrender.test.mjs`，用 Node 内置 `node --test`（零新依赖）覆盖围栏属性容忍、媒体标签三种写法与非法 src 回落；CI 新增 `js-test` job 自动运行。
+
 ## [0.2.3] - 2026-10-30
 
 ### Fixed

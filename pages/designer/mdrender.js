@@ -43,9 +43,10 @@ function safeUrl(escapedUrl) {
 }
 
 // 围栏代码块起始：行首 3+ 个反引号或波浪线，可带语言标识。
-// 仅取首个空白前片段作为语言，忽略其后附加属性（部分官方 .md 源会追加，
-// 如 Mintlify 产出的 ` ```python theme={null} `），避免整段围栏因多余 token 匹配失败。
-const FENCE_RE = /^(`{3,}|~{3,})(?:(\S+)(?:\s.*)?)?\s*$/;
+// 仅取首个空白前片段作为语言（限定为 [A-Za-z0-9_+#.-]+，避免 ` ```{=html} ` 被
+// 当成 language-{=html}），忽略其后附加属性（部分官方 .md 源会追加，如 Mintlify
+// 产出的 ` ```python theme={null} `），避免整段围栏因多余 token 匹配失败。
+const FENCE_RE = /^(`{3,}|~{3,})(?:([A-Za-z0-9_+#.\-]+)(?:\s.*)?)?\s*$/;
 // 收尾围栏：同字符、不短于起始、不带 info string
 const FENCE_CLOSE_RE = /^(`{3,}|~{3,})\s*$/;
 
@@ -255,8 +256,19 @@ function inline(text) {
 }
 
 /**
+ * 媒体标签匹配：支持三种官方 .md 源写法——自闭合 `<video ... />`、同行闭合
+ * `<video ...></video>`、以及多格式回退 `<video><source src=...></video>`。
+ * 仅整行即媒体标签时才匹配（前后无其它文本），避免误吞行内片段。
+ */
+const MEDIA_RE =
+  /^\s*<(video|audio)\b([^>]*)>(?:\s*<source\b([^>]*)>)?\s*(?:<\/\1>)?\s*$/i;
+const SRC_RE = /\bsrc\s*=\s*("([^"]*)"|'([^']*)')/i;
+
+/**
  * 渲染独立的 <video> / <audio> 媒体标签（部分官方 .md 源会直接内联，如 MiniMax 文档）。
  *
+ * 兼容三种写法（见 MEDIA_RE）：自闭合、同行闭合、`<source>` 子标签多格式回退；
+ * 任一写法都能渲染，避免「依赖 <source> 子标签时修复静默失效」。
  * 安全模型：仅当 src 命中 http(s) 白名单时才输出可播放元素，其余属性（autoplay / loop
  * 等）一律丢弃，不执行任何脚本；非白名单或解析失败则回落到默认转义（按普通文本显示）。
  *
@@ -267,11 +279,11 @@ function inline(text) {
  *   渲染后的安全媒体 HTML；不是合法媒体标签则返回 null。
  */
 function renderMediaLine(line) {
-  const m = line.match(/^\s*<(video|audio)\b([^>]*?)\/?>\s*$/i);
+  const m = line.match(MEDIA_RE);
   if (!m) return null;
   const tag = m[1].toLowerCase();
-  const attrs = m[2];
-  const srcMatch = attrs.match(/\bsrc\s*=\s*("([^"]*)"|'([^']*)')/i);
+  // src 取自外层标签或 <source> 子标签，二者皆无则回落到转义文本
+  const srcMatch = (m[2] && m[2].match(SRC_RE)) || (m[3] && m[3].match(SRC_RE));
   if (!srcMatch) return null;
   const rawSrc = srcMatch[2] ?? srcMatch[3];
   // 仅放行 http(s)；data: 媒体不在此支持，避免过大内联与潜在滥用
