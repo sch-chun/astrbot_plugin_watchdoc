@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 ### Added
 
 - **mdrender 单元测试**：新增 `tests/mdrender.test.mjs`，用 Node 内置 `node --test`（零新依赖）覆盖围栏属性容忍、媒体标签三种写法与非法 src 回落；CI 新增 `js-test` job 自动运行。
+- **Python 测试纳入 CI**：新增 `pytest` job，在 Python 3.12 + AstrBot 4.29.3 环境下自动运行 `tests/` 下 222 项用例——此前这批用例从未被任何 CI 自动执行过，回归只能靠本地手跑。`pytest.ini` 的 `pythonpath = ..` 让独立 checkout 布局下的 `import astrbot_plugin_watchdoc` 可用，无需额外改造测试代码。
 
 ## [0.2.3] - 2026-10-30
 
