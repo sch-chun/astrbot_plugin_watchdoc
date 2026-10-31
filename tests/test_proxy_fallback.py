@@ -4,7 +4,9 @@
 - 未配置代理时走直连（沿用系统环境变量代理）；
 - 配置代理且成功时只走代理、不触发直连；
 - 代理连接层失败（连接错误 / 超时）回退直连（直连成功 / 直连也失败）；
-- 代理返回 HTTP 错误（4xx/5xx）不回退，直接抛出。
+- 代理返回 HTTP 错误（4xx/5xx）不回退，直接抛出；
+- 代理地址漏写 scheme（如 127.0.0.1:7890）自动补全 http:// 后走代理；
+- 代理地址非法（InvalidURL）兜底回退直连。
 """
 
 import aiohttp
@@ -117,3 +119,32 @@ async def test_proxy_fails_and_direct_also_fails(monkeypatch):
     with pytest.raises(aiohttp.ClientConnectionError):
         await fetch.fetch_html("https://example.com", proxy="http://127.0.0.1:7890")
     assert len(calls) == 2  # 代理失败后再试直连，直连也失败则抛出
+
+
+async def test_proxy_missing_scheme_is_completed(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        fetch,
+        "_fetch_via",
+        _recorder(calls, _ok, _ok),
+    )
+    out = await fetch.fetch_html("https://example.com", proxy="127.0.0.1:7890")
+    assert out == "<html>ok</html>"
+    assert calls[0][1] == "http://127.0.0.1:7890"  # 漏写 scheme 自动补全
+    assert calls[0][2] is True  # 仍走代理（trust_env 沿用系统代理）
+
+
+async def test_proxy_invalid_url_falls_back_to_direct(monkeypatch):
+    calls = []
+
+    async def _fake(url, proxy, trust_env):
+        calls.append((url, proxy, trust_env))
+        if proxy:
+            raise aiohttp.InvalidURL("bad proxy")
+        return "<html>via-direct</html>"
+
+    monkeypatch.setattr(fetch, "_fetch_via", _fake)
+    out = await fetch.fetch_html("https://example.com", proxy="http://!!!")
+    assert out == "<html>via-direct</html>"
+    assert len(calls) == 2
+    assert calls[1][1] is None  # InvalidURL 兜底回退直连

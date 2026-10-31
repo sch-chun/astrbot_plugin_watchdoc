@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/
 
 - **代理地址配置项 `proxy_url`**：新增全局代理设置，页面抓取优先走该代理；代理连接失败或超时（连接层错误）时自动回退直连，避免代理不可用导致监控整体失效。留空则沿既有行为直连（或沿用系统环境变量代理）。目标站点返回的 4xx/5xx 不触发回退（直连同理会失败）。
 
+### Fixed
+
+- **代理地址漏写 scheme 不再废掉目标监控**：`proxy_url` 漏写 `http://`（如 `127.0.0.1:7890`）会自动补全为 `http://127.0.0.1:7890` 再走代理，而不再抛 `aiohttp.InvalidURL` 让该目标监控直接失效（`InvalidURL` 不在 `ClientConnectionError` 的 MRO 中，原本会直接冒泡；单目标失败虽被 `_check_one` 的 `except` 兜住不波及其它目标，但该目标确实不工作）。同时把 `aiohttp.InvalidURL` 纳入回退兜底层（仍会触发回退直连）。
+
 ## [0.2.4] - 2026-10-30
 
 ### Fixed

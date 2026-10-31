@@ -28,10 +28,13 @@ class PageTooLargeError(Exception):
     """响应体超过上限。"""
 
 
-# 这些异常表示「没拿到响应」（连接 / 代理 / 超时层），
+# 这些异常表示「没拿到响应 / 代理地址非法」（连接 / 代理 / 超时 / URL 层），
 # 而非目标站点返回的 HTTP 状态错误——后者属 ClientResponseError，不触发回退。
+# 注：aiohttp.InvalidURL 不在 ClientConnectionError 的 MRO 中，必须单独列出，
+# 否则漏写 scheme 的代理地址会直接冒泡、废掉该目标的监控。
 _PROXY_FALLBACK_ERRORS = (
     aiohttp.ClientConnectionError,
+    aiohttp.InvalidURL,
     asyncio.TimeoutError,
 )
 
@@ -39,8 +42,13 @@ _PROXY_FALLBACK_ERRORS = (
 async def fetch_html(url: str, proxy: str | None = None) -> str:
     """抓取页面 HTML，支持代理并在代理不可用时回退直连。
 
-    配置了 ``proxy`` 时优先走该代理；若代理连接失败或超时（连接层错误），
-    自动回退到真正直连（绕过任何代理），避免代理挂掉时监控整体失效。
+    配置了 ``proxy`` 时优先走该代理；若代理连接失败、超时或地址非法
+    （连接层错误 / ``InvalidURL``），自动回退到真正直连（绕过任何代理），
+    避免代理挂掉时监控整体失效。
+
+    漏写 scheme 的代理地址（如 ``127.0.0.1:7890``）会自动补全为
+    ``http://127.0.0.1:7890`` 再走代理——补全后通常即合法，比直接回退直连更合理，
+    因为用户本就想用那个代理，回退直连反而可能打不开目标站。
     未配置代理时沿既有行为直连（沿用系统环境变量代理）。
 
     回退只对「连接层」错误生效：目标站点返回的 4xx/5xx（``ClientResponseError``）
@@ -48,7 +56,8 @@ async def fetch_html(url: str, proxy: str | None = None) -> str:
 
     Args:
         url: 目标地址。
-        proxy: 代理地址（如 ``http://127.0.0.1:7890``）。为空 / None 时直连。
+        proxy: 代理地址（如 ``http://127.0.0.1:7890``）。为空 / None 时直连；
+            漏写 scheme（如 ``127.0.0.1:7890``）会自动补全 ``http://``。
 
     Returns:
         页面 HTML 文本。
@@ -56,9 +65,13 @@ async def fetch_html(url: str, proxy: str | None = None) -> str:
     Raises:
         aiohttp.ClientResponseError: 目标站点返回 4xx/5xx（不回退）。
         PageTooLargeError: 响应体超过上限。
-        aiohttp.ClientConnectionError / asyncio.TimeoutError: 直连也失败时抛出。
+        aiohttp.ClientConnectionError / aiohttp.InvalidURL / asyncio.TimeoutError:
+            直连也失败时抛出。
     """
     if proxy:
+        proxy = proxy.strip()
+        if "://" not in proxy:
+            proxy = "http://" + proxy
         try:
             return await _fetch_via(url, proxy, trust_env=True)
         except _PROXY_FALLBACK_ERRORS as err:
