@@ -512,7 +512,7 @@ class WatchdocPlugin(Star):
         )
 
     async def _fetch(self, url: str) -> str:
-        """抓取页面 HTML。
+        """抓取页面 HTML，并按配置透传代理地址。
 
         Args:
             url: 目标地址。
@@ -520,7 +520,8 @@ class WatchdocPlugin(Star):
         Returns:
             页面 HTML 文本。
         """
-        return await fetch.fetch_html(url)
+        proxy = (self.config.get("proxy_url") or "").strip() or None
+        return await fetch.fetch_html(url, proxy=proxy)
 
     def _to_markdown(
         self, html: str, selector: str, tid: str, is_markdown: bool = False

@@ -28,11 +28,54 @@ class PageTooLargeError(Exception):
     """响应体超过上限。"""
 
 
-async def fetch_html(url: str) -> str:
-    """抓取页面 HTML。
+# 这些异常表示「没拿到响应」（连接 / 代理 / 超时层），
+# 而非目标站点返回的 HTTP 状态错误——后者属 ClientResponseError，不触发回退。
+_PROXY_FALLBACK_ERRORS = (
+    aiohttp.ClientConnectionError,
+    asyncio.TimeoutError,
+)
+
+
+async def fetch_html(url: str, proxy: str | None = None) -> str:
+    """抓取页面 HTML，支持代理并在代理不可用时回退直连。
+
+    配置了 ``proxy`` 时优先走该代理；若代理连接失败或超时（连接层错误），
+    自动回退到真正直连（绕过任何代理），避免代理挂掉时监控整体失效。
+    未配置代理时沿既有行为直连（沿用系统环境变量代理）。
+
+    回退只对「连接层」错误生效：目标站点返回的 4xx/5xx（``ClientResponseError``）
+    不触发回退，因为直连同样会拿到同样的错误，回退没有意义。
 
     Args:
         url: 目标地址。
+        proxy: 代理地址（如 ``http://127.0.0.1:7890``）。为空 / None 时直连。
+
+    Returns:
+        页面 HTML 文本。
+
+    Raises:
+        aiohttp.ClientResponseError: 目标站点返回 4xx/5xx（不回退）。
+        PageTooLargeError: 响应体超过上限。
+        aiohttp.ClientConnectionError / asyncio.TimeoutError: 直连也失败时抛出。
+    """
+    if proxy:
+        try:
+            return await _fetch_via(url, proxy, trust_env=True)
+        except _PROXY_FALLBACK_ERRORS as err:
+            logger.warning(
+                f"[watchdoc] 代理 {proxy} 不可用（{type(err).__name__}），回退直连：{url}"
+            )
+    # 无代理配置，或代理不可用回退：真正直连（trust_env 关闭，绕过任何代理）
+    return await _fetch_via(url, None, trust_env=proxy is None)
+
+
+async def _fetch_via(url: str, proxy: str | None, trust_env: bool) -> str:
+    """经指定代理（或不经代理）抓取页面 HTML。
+
+    Args:
+        url: 目标地址。
+        proxy: 代理地址；为 None 时不设置代理。
+        trust_env: 是否读取系统环境变量代理（``http_proxy`` / ``https_proxy``）。
 
     Returns:
         页面 HTML 文本。
@@ -42,9 +85,12 @@ async def fetch_html(url: str) -> str:
         PageTooLargeError: 响应体超过上限时抛出。
     """
     timeout = aiohttp.ClientTimeout(total=30)
+    kwargs: dict = {"headers": {"User-Agent": DEFAULT_UA}}
+    if proxy:
+        kwargs["proxy"] = proxy
     async with (
-        aiohttp.ClientSession(trust_env=True, timeout=timeout) as session,
-        session.get(url, headers={"User-Agent": DEFAULT_UA}) as resp,
+        aiohttp.ClientSession(trust_env=trust_env, timeout=timeout) as session,
+        session.get(url, **kwargs) as resp,
     ):
         resp.raise_for_status()
         return await read_body(resp, MAX_HTML_BYTES)

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.3.0] - 2026-10-31
+
+### Added
+
+- **代理地址配置项 `proxy_url`**：新增全局代理设置，页面抓取优先走该代理；代理连接失败或超时（连接层错误）时自动回退直连，避免代理不可用导致监控整体失效。留空则沿既有行为直连（或沿用系统环境变量代理）。目标站点返回的 4xx/5xx 不触发回退（直连同理会失败）。
+
 ## [0.2.4] - 2026-10-30
 
 ### Fixed

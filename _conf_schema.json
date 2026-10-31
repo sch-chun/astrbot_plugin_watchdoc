@@ -51,6 +51,12 @@
     "default": [],
     "hint": "在归一化阶段从文本中删除匹配内容。仅在确认页面存在动态噪音时添加"
   },
+  "proxy_url": {
+    "description": "代理地址",
+    "type": "string",
+    "default": "",
+    "hint": "填写 http(s) 代理地址（如 http://127.0.0.1:7890），所有页面抓取优先走此代理。留空则直连（或沿用系统环境变量代理）。代理连接失败或超时会自动回退直连，避免代理不可用时监控整体失效"
+  },
   "page_background": {
     "description": "配置页背景图",
     "type": "file",
