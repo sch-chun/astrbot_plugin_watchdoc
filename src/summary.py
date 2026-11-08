@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from astrbot.api import FunctionTool, ToolSet, logger
 from astrbot.api.star import Context
-from astrbot.core.cron.events import CronMessageEvent
+try:
+    # 生产正式版 AstrBot 仍提供该类；本地未发布 master 已移除 cron.events
+    from astrbot.core.cron.events import CronMessageEvent
+except ImportError:  # 兼容未发布 master：cron.events 已被重构移除
+    CronMessageEvent = None
 from astrbot.core.platform.message_session import MessageSession
+from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 from .constants import (
     AGENT_INSTRUCTION,
@@ -17,6 +22,62 @@ from .constants import (
     TOOL_SEARCH_CONTEXT_LINES,
     TOOL_SEARCH_MAX_HITS,
 )
+
+
+def _build_cron_event(
+    context: "Context",
+    session: "MessageSession",
+    message: str,
+) -> "AstrMessageEvent":
+    """构造后台 agent 循环用的 message event，兼容两种 AstrBot。
+
+    - 仍提供 ``astrbot.core.cron.events.CronMessageEvent`` 的版本（生产正式版）：
+      直接用它构造，行为与原先一致。
+    - 已移除该类的未发布 master（本地开发版）：
+      用公开 API 合成一个 ``AstrMessageEvent`` 作为等价替代。
+    """
+    if CronMessageEvent is not None:
+        return CronMessageEvent(
+            context=context,
+            session=session,
+            message=message,
+            message_type=session.message_type,
+        )
+
+    from astrbot.core.platform.astrbot_message import AstrBotMessage
+    from astrbot.core.platform.platform_metadata import PlatformMetadata
+
+    platform = context.get_platform_inst(session.platform_name)
+    platform_meta = (
+        platform.meta()
+        if platform is not None
+        else PlatformMetadata(
+            name=session.platform_name,
+            description="watchdoc synthetic event",
+            id=session.platform_name,
+        )
+    )
+
+    msg = AstrBotMessage()
+    msg.type = session.message_type
+    msg.session_id = session.session_id
+    msg.message = []
+    msg.message_str = message
+    msg.sender = None
+    msg.self_id = ""
+    msg.message_id = ""
+    msg.raw_message = None
+
+    event = AstrMessageEvent(
+        message_str=message,
+        message_obj=msg,
+        platform_meta=platform_meta,
+        session_id=session.session_id,
+    )
+    # CronMessageEvent 会把 context 挂在 event 上，这里保持等价
+    event.context = context
+    return event
+
 
 ROLE_PROMPT = "你是 API 文档变更分析助手。"
 
@@ -172,12 +233,8 @@ async def summarize_with_agent(
     """
     umo = group["umos"][0]
     session = MessageSession.from_str(umo)
-    event = CronMessageEvent(
-        context=context,
-        session=session,
-        message="请分析本次文档变更。",
-        message_type=session.message_type,
-    )
+    # CronMessageEvent 在部分 AstrBot 版本存在、部分已被移除，统一走兼容构造
+    event = _build_cron_event(context, session, "请分析本次文档变更。")
     # 不按插件白名单过滤，本插件的查阅工具必须可见
     event.plugins_name = None
 
