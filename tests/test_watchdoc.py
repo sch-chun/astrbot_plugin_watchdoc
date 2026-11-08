@@ -262,6 +262,20 @@ class FakeKV:
         self.data[key] = value
 
 
+class FakePlatform:
+    """最小平台桩：meta() 返回与 platform_name 同 id 的 PlatformMetadata。"""
+
+    def __init__(self, pid: str):
+        self._pid = pid
+
+    def meta(self):
+        from astrbot.core.platform.platform_metadata import PlatformMetadata
+
+        return PlatformMetadata(
+            name=self._pid, description="fake platform", id=self._pid
+        )
+
+
 class FakeContext:
     def __init__(
         self,
@@ -309,6 +323,9 @@ class FakeContext:
 
     def get_provider_by_id(self, provider_id):
         return None
+
+    def get_platform_inst(self, platform_name):
+        return FakePlatform(platform_name)
 
 
 def make_plugin(
@@ -2888,3 +2905,43 @@ async def test_check_one_markdown_change_notifies(monkeypatch, tmp_path):
     monkeypatch.setattr(plugin, "_fetch", _const_fetcher(MD_DOC + "\n\n新增的一行。"))
     await plugin._check_all()
     assert len(ctx.sent) == 1
+
+
+async def test_build_cron_event_fallback_preserves_umo(monkeypatch):
+    """合成兜底路径：即便平台 meta().id 与 umo 中的 platform_name 不一致，
+    也必须保留原始 umo（event.session = session），并填好 sender / message。
+
+    强制 CronMessageEvent=None，确保无论运行环境是正式版还是未发布 master，
+    都走合成兜底分支，从而在两个 CI 环境都能覆盖到这条路径。
+    """
+    from astrbot.core.platform.message_session import MessageSession
+    from astrbot.core.platform.platform_metadata import PlatformMetadata
+    from astrbot_plugin_watchdoc.src import summary
+
+    monkeypatch.setattr(summary, "CronMessageEvent", None)
+
+    class MismatchPlatform:
+        # 真实平台 id 与 umo 中的 platform_name 故意不一致
+        def meta(self):
+            return PlatformMetadata(
+                name="aiocqhttp", description="real", id="aiocqhttp_v4"
+            )
+
+    class Ctx:
+        def get_platform_inst(self, platform_name):
+            return MismatchPlatform()
+
+    session = MessageSession.from_str("aiocqhttp:FriendMessage:12345")
+    event = summary._build_cron_event(Ctx(), session, "请分析本次文档变更。")
+
+    # umo 必须保持原始 platform_name，不能被 meta().id 改写
+    assert str(event.session) == "aiocqhttp:FriendMessage:12345"
+    # platform_meta 仍是真实平台（id 取 meta().id）
+    assert event.get_platform_id() == "aiocqhttp_v4"
+    # sender 已填，get_sender_id 不再返回空串
+    assert event.get_sender_id() == "12345"
+    # 对齐生产版：context 挂在 context_obj 上
+    assert event.context_obj is not None
+    # message 已结构化
+    assert event.message_obj.message[0].text == "请分析本次文档变更。"
+    assert event.message_obj.message_id

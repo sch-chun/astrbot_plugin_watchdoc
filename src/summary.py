@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from astrbot.api import FunctionTool, ToolSet, logger
 from astrbot.api.star import Context
 
@@ -45,7 +47,8 @@ def _build_cron_event(
             message_type=session.message_type,
         )
 
-    from astrbot.core.platform.astrbot_message import AstrBotMessage
+    from astrbot.core.message.components import Plain
+    from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
     from astrbot.core.platform.platform_metadata import PlatformMetadata
 
     platform = context.get_platform_inst(session.platform_name)
@@ -62,12 +65,13 @@ def _build_cron_event(
     msg = AstrBotMessage()
     msg.type = session.message_type
     msg.session_id = session.session_id
-    msg.message = []
     msg.message_str = message
-    msg.sender = None
+    # 填好 sender / message / message_id / raw_message，否则 get_sender_id() 等返回空
+    msg.sender = MessageMember(user_id=session.session_id, nickname="Scheduler")
+    msg.message = [Plain(message)]
+    msg.message_id = uuid.uuid4().hex
+    msg.raw_message = message
     msg.self_id = ""
-    msg.message_id = ""
-    msg.raw_message = None
 
     event = AstrMessageEvent(
         message_str=message,
@@ -75,8 +79,11 @@ def _build_cron_event(
         platform_meta=platform_meta,
         session_id=session.session_id,
     )
-    # CronMessageEvent 会把 context 挂在 event 上，这里保持等价
-    event.context = context
+    # AstrMessageEvent.__init__ 会用 platform_meta.id 重建 session，从而改写 umo；
+    # 生产版 CronMessageEvent 直接保留传入的 session，这里对齐，保住原始 umo
+    event.session = session
+    # 对齐生产版：context 挂在 context_obj 上（不是 event.context）
+    event.context_obj = context
     return event
 
 
