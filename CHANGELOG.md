@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/lang/zh-CN/).
 
+## [0.4.0] - 2026-11-08
+
+### Fixed
+
+- **兼容已移除 `cron.events` 的 AstrBot（定时任务后台不再 import error）**：旧版 AstrBot 提供 `astrbot.core.cron.events.CronMessageEvent` 作为后台合成 message event 的便利类，插件用它构造事件喂给 `context.tool_loop_agent` 做文档变更总结；本地最新未发布 master 已将该类随 cron 重构（改为 `basic` / `active_agent` 任务）一并移除，导致插件在该 AstrBot 上加载即 `ModuleNotFoundError`。现改为 try/except 双路径：`CronMessageEvent` 存在时走原逻辑（生产正式版行为不变），缺失时用公开 API 合成等价 `AstrMessageEvent`。合成路径对齐生产版的构造细节：`context.get_platform_inst(session.platform_name).meta()` 取 `PlatformMetadata`；构造后显式 `event.session = session` 保住原始 umo（避免 `AstrMessageEvent.__init__` 用 `platform_meta.id` 重建 session、把会话标识改写成平台 id）；`context` 挂在 `event.context_obj` 上（对齐生产版字段名，而非 `event.context`）；并补齐 `sender` / `message` / `message_id` / `raw_message`，使 `get_sender_id()` 等返回有效值。`astrbot_version` 仍声明 `>=4.24.0`，因双路径对新旧 AstrBot 均兼容。
+
 ## [0.3.0] - 2026-10-31
 
 ### Added
