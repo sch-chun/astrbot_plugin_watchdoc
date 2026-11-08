@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from astrbot.api import FunctionTool, ToolSet, logger
 from astrbot.api.star import Context
+
 try:
     # 生产正式版 AstrBot 仍提供该类；本地未发布 master 已移除 cron.events
     from astrbot.core.cron.events import CronMessageEvent
 except ImportError:  # 兼容未发布 master：cron.events 已被重构移除
     CronMessageEvent = None
-from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
+from astrbot.core.platform.message_session import MessageSession
 
 from .constants import (
     AGENT_INSTRUCTION,
@@ -25,10 +26,10 @@ from .constants import (
 
 
 def _build_cron_event(
-    context: "Context",
-    session: "MessageSession",
+    context: Context,
+    session: MessageSession,
     message: str,
-) -> "AstrMessageEvent":
+) -> AstrMessageEvent:
     """构造后台 agent 循环用的 message event，兼容两种 AstrBot。
 
     - 仍提供 ``astrbot.core.cron.events.CronMessageEvent`` 的版本（生产正式版）：
